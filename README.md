@@ -69,10 +69,43 @@ Contracts:
 ```bash
 npm run build -w packages/contracts
 npm run test -w packages/contracts
+npm run deploy:network -w packages/contracts -- --network polygon
+npm run deploy:network -w packages/contracts -- --network arbitrumSepolia
 npm run deploy:local -w packages/contracts
 npm run seed:local -w packages/contracts
 npm run upgrade:smoke -w packages/contracts
 ```
+
+## Production deploy and upgrade
+
+`packages/contracts` now supports a single universal `hardhat-deploy` flow for deploy and upgrade:
+
+- first run on a network deploys `VotingCore` UUPS proxy,
+- next runs on the same network compare on-chain implementation bytecode vs current build and upgrade only when changed,
+- if nothing changed, script is no-op.
+
+Per-network settings live in YAML files:
+
+- `packages/contracts/deploy-config/polygon.yaml`
+- `packages/contracts/deploy-config/arbitrumSepolia.yaml`
+
+Run:
+
+```bash
+npm run deploy:network -w packages/contracts -- --network polygon
+npm run deploy:network -w packages/contracts -- --network arbitrumSepolia
+```
+
+Required env keys for live networks:
+
+- `DEPLOYER_PRIVATE_KEY` (single EOA; deployer and contract owner)
+- `POLYGON_RPC_URL`
+- `ARBITRUM_SEPOLIA_RPC_URL`
+
+Optional:
+
+- `POLYGONSCAN_API_KEY`
+- `ARBISCAN_API_KEY`
 
 Web:
 

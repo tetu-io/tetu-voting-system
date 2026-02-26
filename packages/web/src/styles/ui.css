@@ -301,6 +301,19 @@
   margin-bottom: calc(var(--grid-step) * 5);
 }
 
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--grid-step) * 2);
+  color: var(--color-white);
+}
+
+.app-brand__logo {
+  width: 100px;
+  height: 32px;
+  display: block;
+}
+
 .app-main {
   display: grid;
   gap: calc(var(--grid-step) * 4);

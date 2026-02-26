@@ -1,0 +1,4 @@
+chainId: 31337
+confirmations: 1
+verify: false
+writeSharedArtifacts: false

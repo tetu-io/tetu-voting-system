@@ -143,6 +143,29 @@ This keeps tallies consistent with the latest recorded vote per voter.
   - run smoke checks (read/write/vote) post-upgrade.
 - Forbid self-destruct/delegatecall unsafe paths in implementation.
 
+## 10.1 Deployment/Upgrade Automation
+
+- Production deploy uses `hardhat-deploy` with one script: `packages/contracts/deploy/01_voting_core.js`.
+- The script is universal:
+  - if proxy is absent -> deploy `VotingCore` UUPS proxy and implementation,
+  - if proxy exists and implementation bytecode changed -> upgrade proxy,
+  - if proxy exists and bytecode is same -> no-op.
+- Network config is file-based and separate per network:
+  - `packages/contracts/deploy-config/polygon.yaml`
+  - `packages/contracts/deploy-config/arbitrumSepolia.yaml`
+- Network selection is standard hardhat argument:
+  - `hardhat deploy --network polygon`
+  - `hardhat deploy --network arbitrumSepolia`
+- Governance/deploy model is intentionally single-EOA:
+  - deployer key from `DEPLOYER_PRIVATE_KEY`,
+  - deploy script enforces `initialOwner == deployer`.
+
+## 10.2 Current Contract Caveat
+
+- `VotingCoreV2.initializeV2()` is externally callable (reinitializer).
+- It is currently empty, so no direct privilege escalation now.
+- If future versions add meaningful logic there, access control must be explicit (e.g. `onlyOwner`) or logic must remain harmless.
+
 ## 11. Contract Test Minimum
 
 - Unit:

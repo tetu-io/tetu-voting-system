@@ -9,7 +9,8 @@
   - ended proposal rejection.
 - Integration tests:
   - proxy deployment + initialization,
-  - upgrade smoke path.
+  - upgrade smoke path,
+  - deploy script idempotency (re-run does not force upgrade without bytecode change).
 - UI E2E tests (Playwright):
   - wallet connect + header menu/logout,
   - create space via modal,
@@ -91,3 +92,4 @@ VITE_USE_MOCK=true npm run dev -w packages/web
 - All contract tests pass.
 - Playwright suite passes on fresh local stack.
 - At least one upgrade test proves state preservation after UUPS implementation switch.
+- At least one deploy automation test proves no-op behavior on second deploy run.

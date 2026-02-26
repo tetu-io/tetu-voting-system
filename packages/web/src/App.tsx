@@ -5,6 +5,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { decodeEventLog, defineChain, formatEther, http, parseAbiItem, type Hex, type PublicClient } from "viem";
 import { useAccount, useChainId, useConnect, useDisconnect, usePublicClient, useWriteContract } from "wagmi";
 import { votingAbi } from "./abi";
+import logo from "./assets/images/logo.svg";
 import {
   Button,
   Card,
@@ -234,8 +235,9 @@ function Header({ runtime }: { runtime: RuntimeContext }) {
   return (
     <Card className="app-nav">
       <header className="row-between">
-        <Link to="/" className="text__title3" style={{ textDecoration: "none" }}>
-          Tetu Voting v1
+        <Link to="/" className="app-brand" style={{ textDecoration: "none" }}>
+          <img src={logo} alt="Tetu logo" className="app-brand__logo" />
+          <span className="text__title3">Tetu Voting v1</span>
         </Link>
 
         <div className="row">

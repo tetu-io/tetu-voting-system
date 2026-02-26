@@ -1,0 +1,34 @@
+:root {
+  --color-background: #162030;
+  --color-plate: #222d40;
+  --color-dark: #1e2839;
+  --color-dark-20: #273142;
+  --color-dark-40: #323e50;
+  --color-white: #ffffff;
+  --color-grey: #7f8fa4;
+  --color-brand: #04a8f0;
+  --color-brand-light: #41bbe1;
+  --color-brand-dark: #0376a8;
+  --color-el-hover: #d8e2ff;
+  --color-el-disabled: #424e63;
+  --color-el-news: #686df1;
+  --color-el-help: #f7981c;
+  --color-el-error: #fd3c43;
+  --color-el-value: #4ac25b;
+  --color-overlay: rgba(19, 24, 32, 0.8);
+  --color-blue-background: rgba(30, 40, 57, 0.5);
+  --color-blue-background-light: rgba(50, 62, 80, 0.24);
+
+  --gradient-tab-accent: linear-gradient(270deg, #04a8f0 0%, #686df1 100%);
+  --gradient-button-primary: linear-gradient(180deg, #04a8f0 0%, #12518a 100%);
+  --gradient-button-neutral: linear-gradient(180deg, #475668 0%, #3c4958 100%);
+  --gradient-button-error: linear-gradient(180deg, #fb7277 3.03%, #67090d 97.78%);
+  --gradient-button-success: linear-gradient(180deg, #33c247 0%, #1f6628 97.78%);
+
+  --radius-base: 8px;
+  --radius-sm: 4px;
+  --grid-step: 4px;
+  --container-max-width: 1200px;
+
+  --shadow-card: 0 20px 20px rgba(21, 21, 21, 0.2);
+}

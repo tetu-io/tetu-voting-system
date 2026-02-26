@@ -142,3 +142,14 @@ vite.config.ts.timestamp-*
 
 packages/contracts/cache
 packages/contracts/artifacts
+packages/web/node_modules
+packages/web/dist
+packages/web/build
+packages/web/coverage
+packages/web/test-results
+packages/web/test-results-e2e
+packages/web/test-results-runtime
+packages/web/test-results-e2e-full
+packages/web/test-results-runtime-full
+packages/web/test-results-e2e-full-full
+packages/contracts/.env

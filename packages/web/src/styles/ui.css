@@ -1,0 +1,327 @@
+.ui-card {
+  background: var(--color-plate);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-card);
+  border: 1px solid transparent;
+  padding: calc(var(--grid-step) * 4);
+}
+
+.ui-card--dark {
+  background: var(--color-dark);
+  border-color: var(--color-dark-40);
+}
+
+.ui-card--active {
+  border-color: var(--color-brand);
+}
+
+.ui-btn {
+  border: 1px solid var(--color-dark-40);
+  border-radius: var(--radius-base);
+  color: var(--color-white);
+  cursor: pointer;
+  padding: calc(var(--grid-step) * 2) calc(var(--grid-step) * 4);
+  transition: opacity 0.2s ease;
+}
+
+.ui-btn:hover:enabled {
+  opacity: 0.92;
+}
+
+.ui-btn:disabled {
+  background: var(--color-el-disabled);
+  color: var(--color-grey);
+  cursor: not-allowed;
+}
+
+.ui-btn--primary {
+  background: var(--gradient-button-primary);
+}
+
+.ui-btn--secondary {
+  background: var(--gradient-button-neutral);
+}
+
+.ui-btn--success {
+  background: var(--gradient-button-success);
+}
+
+.ui-btn--error {
+  background: var(--gradient-button-error);
+}
+
+.ui-btn--ghost {
+  background: transparent;
+  border-color: var(--color-dark-40);
+}
+
+.ui-btn--sm {
+  padding: calc(var(--grid-step) * 1.5) calc(var(--grid-step) * 3);
+}
+
+.ui-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-dark-20);
+  border: 1px solid var(--color-dark-40);
+  color: var(--color-grey);
+}
+
+.ui-field {
+  display: grid;
+  gap: calc(var(--grid-step) * 2);
+}
+
+.ui-label {
+  font-size: 12px;
+  line-height: 16px;
+  text-transform: uppercase;
+  color: var(--color-grey);
+  font-weight: 600;
+}
+
+.ui-input,
+.ui-textarea,
+.ui-select,
+.ui-slider {
+  width: 100%;
+  border: 1px solid var(--color-dark-40);
+  border-radius: var(--radius-base);
+  background: var(--color-dark);
+  color: var(--color-white);
+}
+
+.ui-input,
+.ui-select {
+  padding: calc(var(--grid-step) * 2) calc(var(--grid-step) * 4);
+  min-height: 40px;
+}
+
+.ui-textarea {
+  padding: calc(var(--grid-step) * 2) calc(var(--grid-step) * 4);
+  min-height: 88px;
+  resize: vertical;
+}
+
+.ui-input:focus,
+.ui-textarea:focus,
+.ui-select:focus {
+  outline: none;
+  border-color: var(--color-brand);
+}
+
+.ui-select option {
+  background: var(--color-dark);
+  color: var(--color-white);
+}
+
+.ui-checkbox-line {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--grid-step) * 2);
+}
+
+.ui-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+
+.ui-modal {
+  width: min(450px, calc(100vw - 32px));
+  background: var(--color-plate);
+  border-radius: var(--radius-base);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--color-dark-40);
+  padding: calc(var(--grid-step) * 4);
+}
+
+.ui-modal--wide {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.ui-table-wrap {
+  border-radius: var(--radius-base);
+  overflow: hidden;
+  border: 1px solid var(--color-dark-40);
+}
+
+.ui-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.ui-table thead tr {
+  background: var(--color-dark-20);
+}
+
+.ui-table th {
+  text-align: left;
+  color: var(--color-grey);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 12px 16px;
+}
+
+.ui-table td {
+  background: var(--color-dark);
+  padding: 12px 16px;
+  border-bottom: 4px solid var(--color-background);
+}
+
+.ui-table tbody tr:hover td {
+  background: var(--color-dark-20);
+}
+
+.ui-status {
+  border: 1px solid var(--color-dark-40);
+  background: var(--color-dark);
+  border-radius: var(--radius-base);
+  padding: calc(var(--grid-step) * 3);
+}
+
+.ui-status--info {
+  border-color: var(--color-brand);
+}
+
+.ui-status--success {
+  border-color: var(--color-el-value);
+}
+
+.ui-status--warning {
+  border-color: var(--color-el-help);
+}
+
+.ui-status--error {
+  border-color: var(--color-el-error);
+}
+
+.ui-tabs {
+  display: flex;
+  gap: calc(var(--grid-step) * 4);
+  border-bottom: 1px solid var(--color-dark-40);
+}
+
+.ui-tabs__btn {
+  position: relative;
+  background: transparent;
+  border: 0;
+  color: var(--color-grey);
+  padding: calc(var(--grid-step) * 2) 0;
+  cursor: pointer;
+}
+
+.ui-tabs__btn:hover,
+.ui-tabs__btn--active {
+  color: var(--color-white);
+}
+
+.ui-tabs__btn--active::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: var(--gradient-tab-accent);
+}
+
+.ui-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--grid-step) * 1);
+}
+
+.ui-tooltip__bubble {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  min-width: 180px;
+  display: none;
+  background: var(--color-dark);
+  border: 1px solid var(--color-dark-40);
+  border-radius: var(--radius-sm);
+  padding: calc(var(--grid-step) * 2);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-white);
+}
+
+.ui-tooltip:hover .ui-tooltip__bubble {
+  display: block;
+}
+
+.ui-slider {
+  appearance: none;
+  height: 8px;
+  border-radius: 8px;
+  background: var(--color-dark-40);
+  border: 0;
+  padding: 0;
+}
+
+.ui-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-dark);
+  border: 1px solid var(--color-brand);
+}
+
+.ui-slider:disabled {
+  background: var(--color-el-disabled);
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(var(--grid-step) * 4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--grid-step) * 2);
+}
+
+.app-nav {
+  margin-bottom: calc(var(--grid-step) * 5);
+}
+
+.app-main {
+  display: grid;
+  gap: calc(var(--grid-step) * 4);
+}
+
+.page-stack {
+  display: grid;
+  gap: calc(var(--grid-step) * 4);
+}
+
+@media (max-width: 500px) {
+  .app-shell {
+    padding: calc(var(--grid-step) * 3);
+  }
+
+  .ui-modal,
+  .ui-modal--wide {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: calc(var(--grid-step) * 4);
+  }
+}

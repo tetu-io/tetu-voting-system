@@ -16,6 +16,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "DuplicateOption",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -49,6 +54,16 @@
   {
     "inputs": [],
     "name": "InvalidTimeRange",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidVoteSplit",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MultiSelectNotAllowed",
     "type": "error"
   },
   {
@@ -198,6 +213,12 @@
         "internalType": "uint64",
         "name": "endAt",
         "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "allowMultipleChoices",
+        "type": "bool"
       }
     ],
     "name": "ProposalCreated",
@@ -333,14 +354,26 @@
       },
       {
         "indexed": false,
-        "internalType": "uint16",
-        "name": "optionIndex",
-        "type": "uint16"
+        "internalType": "uint16[]",
+        "name": "optionIndices",
+        "type": "uint16[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16[]",
+        "name": "weightsBps",
+        "type": "uint16[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "distributedWeights",
+        "type": "uint256[]"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "weight",
+        "name": "totalWeight",
         "type": "uint256"
       }
     ],
@@ -364,26 +397,32 @@
       },
       {
         "indexed": false,
-        "internalType": "uint16",
-        "name": "oldOptionIndex",
-        "type": "uint16"
-      },
-      {
-        "indexed": false,
         "internalType": "uint256",
-        "name": "oldWeight",
+        "name": "oldTotalWeight",
         "type": "uint256"
       },
       {
         "indexed": false,
-        "internalType": "uint16",
-        "name": "newOptionIndex",
-        "type": "uint16"
+        "internalType": "uint16[]",
+        "name": "optionIndices",
+        "type": "uint16[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint16[]",
+        "name": "weightsBps",
+        "type": "uint16[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "distributedWeights",
+        "type": "uint256[]"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "newWeight",
+        "name": "newTotalWeight",
         "type": "uint256"
       }
     ],
@@ -434,6 +473,11 @@
         "internalType": "uint64",
         "name": "endAt",
         "type": "uint64"
+      },
+      {
+        "internalType": "bool",
+        "name": "allowMultipleChoices",
+        "type": "bool"
       }
     ],
     "name": "createProposal",
@@ -550,6 +594,11 @@
             "internalType": "uint256",
             "name": "totalVotesCast",
             "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowMultipleChoices",
+            "type": "bool"
           }
         ],
         "internalType": "struct VotingCore.Proposal",
@@ -666,6 +715,16 @@
             "internalType": "uint64",
             "name": "updatedAt",
             "type": "uint64"
+          },
+          {
+            "internalType": "uint16[]",
+            "name": "optionIndices",
+            "type": "uint16[]"
+          },
+          {
+            "internalType": "uint16[]",
+            "name": "weightsBps",
+            "type": "uint16[]"
           }
         ],
         "internalType": "struct VotingCore.VoteReceipt",
@@ -855,9 +914,14 @@
         "type": "uint256"
       },
       {
-        "internalType": "uint16",
-        "name": "optionIndex",
-        "type": "uint16"
+        "internalType": "uint16[]",
+        "name": "optionIndices",
+        "type": "uint16[]"
+      },
+      {
+        "internalType": "uint16[]",
+        "name": "weightsBps",
+        "type": "uint16[]"
       }
     ],
     "name": "vote",

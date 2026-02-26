@@ -59,12 +59,12 @@ describe("VotingCore", function () {
     await expect(
       voting
         .connect(owner)
-        .createProposal(spaceId, "bad opts", "d", ["one"], BigInt(now + 1), BigInt(now + 10))
+        .createProposal(spaceId, "bad opts", "d", ["one"], BigInt(now + 1), BigInt(now + 10), false)
     ).to.be.revertedWithCustomError(voting, "InvalidOption");
     await expect(
       voting
         .connect(owner)
-        .createProposal(spaceId, "bad range", "d", ["one", "two"], BigInt(now + 10), BigInt(now + 1))
+        .createProposal(spaceId, "bad range", "d", ["one", "two"], BigInt(now + 10), BigInt(now + 1), false)
     ).to.be.revertedWithCustomError(voting, "InvalidTimeRange");
   });
 
@@ -75,18 +75,79 @@ describe("VotingCore", function () {
     await (
       await voting
         .connect(proposer)
-        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now - 10), BigInt(now + 3600))
+        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
     ).wait();
 
-    await expect(voting.connect(voter).vote(1, 0)).to.emit(voting, "VoteCast");
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.emit(voting, "VoteCast");
     let [_, tallies] = await voting.getProposalTallies(1);
     expect(tallies[0]).to.equal(ethers.parseEther("100"));
     expect(tallies[1]).to.equal(0);
 
-    await expect(voting.connect(voter).vote(1, 1)).to.emit(voting, "VoteRecast");
+    await expect(voting.connect(voter).vote(1, [1], [10000])).to.emit(voting, "VoteRecast");
     [_, tallies] = await voting.getProposalTallies(1);
     expect(tallies[0]).to.equal(0);
     expect(tallies[1]).to.equal(ethers.parseEther("100"));
+  });
+
+  it("supports multi-choice vote with percentage split and recast", async function () {
+    const { voting, spaceId, proposer, voter } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, proposer.address, true)).wait();
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(proposer)
+        .createProposal(spaceId, "P2", "D2", ["A", "B", "C"], BigInt(now - 10), BigInt(now + 3600), true)
+    ).wait();
+
+    await expect(voting.connect(voter).vote(1, [0, 2], [7000, 3000])).to.emit(voting, "VoteCast");
+    let [__, tallies] = await voting.getProposalTallies(1);
+    expect(tallies[0]).to.equal(ethers.parseEther("70"));
+    expect(tallies[1]).to.equal(0);
+    expect(tallies[2]).to.equal(ethers.parseEther("30"));
+
+    await expect(voting.connect(voter).vote(1, [1, 2], [2500, 7500])).to.emit(voting, "VoteRecast");
+    [__, tallies] = await voting.getProposalTallies(1);
+    expect(tallies[0]).to.equal(0);
+    expect(tallies[1]).to.equal(ethers.parseEther("25"));
+    expect(tallies[2]).to.equal(ethers.parseEther("75"));
+  });
+
+  it("rejects invalid multi-choice vote splits", async function () {
+    const { voting, spaceId, proposer, voter } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, proposer.address, true)).wait();
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(proposer)
+        .createProposal(spaceId, "P3", "D3", ["A", "B", "C"], BigInt(now - 10), BigInt(now + 3600), true)
+    ).wait();
+
+    await expect(voting.connect(voter).vote(1, [], [])).to.be.revertedWithCustomError(voting, "InvalidVoteSplit");
+    await expect(voting.connect(voter).vote(1, [0, 1], [5000])).to.be.revertedWithCustomError(voting, "InvalidVoteSplit");
+    await expect(voting.connect(voter).vote(1, [0, 1], [5000, 4000])).to.be.revertedWithCustomError(
+      voting,
+      "InvalidVoteSplit"
+    );
+    await expect(voting.connect(voter).vote(1, [0, 0], [5000, 5000])).to.be.revertedWithCustomError(
+      voting,
+      "DuplicateOption"
+    );
+  });
+
+  it("rejects multi-choice payload for single-choice proposal", async function () {
+    const { voting, spaceId, proposer, voter } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, proposer.address, true)).wait();
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(proposer)
+        .createProposal(spaceId, "P4", "D4", ["A", "B", "C"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+
+    await expect(voting.connect(voter).vote(1, [0, 1], [5000, 5000])).to.be.revertedWithCustomError(
+      voting,
+      "MultiSelectNotAllowed"
+    );
   });
 
   it("enforces voting window boundaries", async function () {
@@ -96,16 +157,16 @@ describe("VotingCore", function () {
     await (
       await voting
         .connect(proposer)
-        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now + 100), BigInt(now + 200))
+        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now + 100), BigInt(now + 200), false)
     ).wait();
 
-    await expect(voting.connect(voter).vote(1, 0)).to.be.revertedWithCustomError(voting, "ProposalNotStarted");
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.be.revertedWithCustomError(voting, "ProposalNotStarted");
     await time.setNextBlockTimestamp(now + 110);
     await mine();
-    await expect(voting.connect(voter).vote(1, 0)).to.emit(voting, "VoteCast");
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.emit(voting, "VoteCast");
     await time.setNextBlockTimestamp(now + 210);
     await mine();
-    await expect(voting.connect(voter).vote(1, 0)).to.be.revertedWithCustomError(voting, "ProposalEnded");
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.be.revertedWithCustomError(voting, "ProposalEnded");
   });
 
   it("rejects voting on deleted proposal", async function () {
@@ -115,10 +176,10 @@ describe("VotingCore", function () {
     await (
       await voting
         .connect(proposer)
-        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now - 10), BigInt(now + 200))
+        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now - 10), BigInt(now + 200), false)
     ).wait();
     await (await voting.connect(proposer).deleteProposal(1)).wait();
-    await expect(voting.connect(voter).vote(1, 0)).to.be.revertedWithCustomError(voting, "ProposalIsDeleted");
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.be.revertedWithCustomError(voting, "ProposalIsDeleted");
   });
 
   it("retains state after UUPS upgrade", async function () {

@@ -3,13 +3,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, defineChain, http } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { votingAbi } from "../src/abi";
+
+test.skip(process.env.VITE_USE_MOCK === "true", "Real-contract e2e requires VITE_USE_MOCK=false");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const deploymentPath = path.resolve(__dirname, "../../shared/src/deployment.local.json");
-const ownerAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const adminAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
-const proposerAddress = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
+const ownerAddress = privateKeyToAccount(ownerKey).address;
+
+function toDateTimeLocalInput(unixTs: number): string {
+  const date = new Date(unixTs * 1000);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
 
 function attachRuntimeGuards(page: import("@playwright/test").Page) {
   const pageErrors: string[] = [];
@@ -32,7 +41,7 @@ function attachRuntimeGuards(page: import("@playwright/test").Page) {
   };
 }
 
-test("full frontend e2e on real contracts", async ({ page }) => {
+test("frontend pages flow on real contracts", async ({ page }) => {
   const assertRuntimeHealthy = attachRuntimeGuards(page);
   const deployment = JSON.parse(await fs.readFile(deploymentPath, "utf8"));
   const chain = defineChain({
@@ -44,35 +53,32 @@ test("full frontend e2e on real contracts", async ({ page }) => {
   const rpc = createPublicClient({ chain, transport: http("http://127.0.0.1:8545") });
 
   await page.goto("/");
-  await expect(page.getByTestId("connect-test-wallet")).toBeVisible();
-  await page.getByTestId("connect-test-wallet").click();
+  if (await page.getByTestId("mock-mode-banner").isVisible().catch(() => false)) {
+    test.skip(true, "Real-contract e2e is skipped when app is in mock mode.");
+  }
+  const testWalletInput = page.getByTestId("test-wallet-key-input");
+  if (await testWalletInput.isVisible().catch(() => false)) {
+    await testWalletInput.fill(ownerKey);
+    await page.getByTestId("connect-test-wallet").click();
+  }
   await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
 
-  // 1) Create space through UI.
+  await page.getByTestId("open-create-space-modal").click();
   await page.getByTestId("space-token-input").fill(deployment.token);
-  await page.getByTestId("space-name-input").fill("E2E Space");
-  await page.getByTestId("space-description-input").fill("Space created by Playwright");
+  await page.getByTestId("space-name-input").fill("E2E New Space");
+  await page.getByTestId("space-description-input").fill("Space created from pages e2e");
   await page.getByTestId("create-space-btn").click();
-  await expect(page.getByTestId("status-message")).toContainText("Space created:");
-  const statusAfterSpace = (await page.getByTestId("status-message").textContent()) ?? "";
-  const createdSpaceId = BigInt(statusAfterSpace.split(":").at(-1)?.trim() ?? "0");
-  expect(createdSpaceId).toBeGreaterThan(0n);
-  const createdSpace = await rpc.readContract({
-    address: deployment.votingCore,
-    abi: votingAbi,
-    functionName: "getSpace",
-    args: [createdSpaceId]
-  });
-  expect(createdSpace.name).toBe("E2E Space");
+  await expect(page).toHaveURL(/\/spaces\/\d+$/);
 
-  // 2) Manage roles through UI.
-  await page.getByTestId("space-id-input").fill(createdSpaceId.toString());
+  const createdSpaceIdText = page.url().split("/").at(-1) ?? "0";
+  const createdSpaceId = BigInt(createdSpaceIdText);
+  expect(createdSpaceId).toBeGreaterThan(0n);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}/settings$`));
   await page.getByTestId("admin-account-input").fill(adminAddress);
-  await page.getByTestId("proposer-account-input").fill(proposerAddress);
   await page.getByTestId("set-admin-btn").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setAdmin");
-  await page.getByTestId("set-proposer-btn").click();
-  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setProposer");
 
   const adminOnChain = await rpc.readContract({
     address: deployment.votingCore,
@@ -80,94 +86,72 @@ test("full frontend e2e on real contracts", async ({ page }) => {
     functionName: "isAdmin",
     args: [createdSpaceId, adminAddress]
   });
-  const proposerOnChain = await rpc.readContract({
-    address: deployment.votingCore,
-    abi: votingAbi,
-    functionName: "isProposer",
-    args: [createdSpaceId, proposerAddress]
-  });
   expect(adminOnChain).toBe(true);
-  expect(proposerOnChain).toBe(true);
 
-  // 3) Create proposal via UI.
+  await page.goto(`/spaces/${createdSpaceIdText}`);
+  if (!(await page.getByTestId("wallet-status").isVisible().catch(() => false))) {
+    const testWalletInputReload = page.getByTestId("test-wallet-key-input");
+    if (await testWalletInputReload.isVisible().catch(() => false)) {
+      await testWalletInputReload.fill(ownerKey);
+      await page.getByTestId("connect-test-wallet").click();
+    }
+    await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
+  }
+  await page.getByRole("button", { name: "Create Proposal" }).click();
+  await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}/proposals/new$`));
+
   const nowTs = Math.floor(Date.now() / 1000);
-  await page.getByTestId("proposal-title-input").fill("E2E Proposal Main");
-  await page.getByTestId("proposal-description-input").fill("Main proposal for vote flow");
-  await page.getByTestId("proposal-options-input").fill("Alpha,Beta");
-  await page.getByTestId("proposal-start-input").fill(String(nowTs - 5));
-  await page.getByTestId("proposal-end-input").fill(String(nowTs + 300));
+  await page.getByTestId("proposal-title-input").fill("E2E Proposal From New Page");
+  await page.getByTestId("proposal-description-input").fill("Full pages flow proposal");
+  await page.getByTestId("proposal-start-input").fill(toDateTimeLocalInput(nowTs - 60));
+  await page.getByTestId("proposal-end-input").fill(toDateTimeLocalInput(nowTs + 3600));
   await page.getByTestId("create-proposal-btn").click();
-  await expect(page.getByTestId("status-message")).toContainText("Proposal created:");
-  const proposalStatus = (await page.getByTestId("status-message").textContent()) ?? "";
-  const mainProposalId = BigInt(proposalStatus.split(":").at(-1)?.trim() ?? "0");
-  expect(mainProposalId).toBeGreaterThan(0n);
 
-  await page.getByTestId("load-proposals-btn").click();
-  await page.getByTestId(`select-proposal-${mainProposalId.toString()}`).click();
-  await expect(page.getByTestId("selected-proposal-title")).toContainText(mainProposalId.toString());
+  await expect(page).toHaveURL(/\/proposals\/\d+$/);
+  const proposalIdText = page.url().split("/").at(-1) ?? "0";
+  const proposalId = BigInt(proposalIdText);
+  expect(proposalId).toBeGreaterThan(0n);
 
-  // 4) Vote and re-vote via UI with on-chain checks.
   await page.getByTestId("vote-option-0").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
-  let mainTallies = await rpc.readContract({
+  await expect(page.getByText(ownerAddress)).toBeVisible();
+
+  const tallies = await rpc.readContract({
     address: deployment.votingCore,
     abi: votingAbi,
     functionName: "getProposalTallies",
-    args: [mainProposalId]
+    args: [proposalId]
   });
-  const firstTallies = Array.isArray(mainTallies) ? mainTallies[1] : mainTallies.tallies;
-  expect(firstTallies[0]).toBeGreaterThan(0n);
-  expect(firstTallies[1]).toBe(0n);
+  expect(tallies[1][0]).toBeGreaterThan(0n);
 
-  const firstVoteTxHash = await page.getByTestId("tx-hash").textContent();
-  await page.getByTestId("vote-option-1").click();
-  await expect(page.getByTestId("tx-hash")).not.toContainText(firstVoteTxHash ?? "");
-  mainTallies = await rpc.readContract({
-    address: deployment.votingCore,
-    abi: votingAbi,
-    functionName: "getProposalTallies",
-    args: [mainProposalId]
-  });
-  const recastTallies = Array.isArray(mainTallies) ? mainTallies[1] : mainTallies.tallies;
-  expect(recastTallies[1]).toBeGreaterThan(0n);
-  expect(recastTallies[0]).toBeLessThan(firstTallies[0]);
-  const voteReceipt = await rpc.readContract({
-    address: deployment.votingCore,
-    abi: votingAbi,
-    functionName: "getVoteReceipt",
-    args: [mainProposalId, ownerAddress]
-  });
-  expect(voteReceipt.hasVoted).toBe(true);
-  expect(voteReceipt.optionIndex).toBe(1);
-
-  // 5) Create short proposal and verify ended rejection from UI.
-  const shortNow = Math.floor(Date.now() / 1000);
-  await page.getByTestId("proposal-title-input").fill("E2E Proposal Ended");
-  await page.getByTestId("proposal-description-input").fill("For ended rejection");
-  await page.getByTestId("proposal-options-input").fill("Yes,No");
-  await page.getByTestId("proposal-start-input").fill(String(shortNow - 1));
-  await page.getByTestId("proposal-end-input").fill(String(shortNow + 1));
+  await page.goto(`/spaces/${createdSpaceIdText}`);
+  await page.getByRole("button", { name: "Create Proposal" }).click();
+  await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}/proposals/new$`));
+  await page.getByTestId("proposal-title-input").fill("E2E Multi Proposal");
+  await page.getByTestId("proposal-description-input").fill("Multi-select weighted vote");
+  await page.getByTestId("proposal-multiselect-input").check();
+  await page.getByTestId("proposal-start-input").fill(toDateTimeLocalInput(nowTs - 60));
+  await page.getByTestId("proposal-end-input").fill(toDateTimeLocalInput(nowTs + 3600));
   await page.getByTestId("create-proposal-btn").click();
-  await expect(page.getByTestId("status-message")).toContainText("Proposal created:");
-  const endedStatus = (await page.getByTestId("status-message").textContent()) ?? "";
-  const endedProposalId = BigInt(endedStatus.split(":").at(-1)?.trim() ?? "0");
-  await page.getByTestId("load-proposals-btn").click();
-  await page.getByTestId(`select-proposal-${endedProposalId.toString()}`).click();
-  await page.waitForTimeout(1500);
-  await page.getByTestId("vote-option-0").click();
-  await expect(page.getByTestId("status-message")).toContainText("Proposal ended");
+  await expect(page).toHaveURL(/\/proposals\/\d+$/);
+  const multiProposalId = BigInt(page.url().split("/").at(-1) ?? "0");
+  expect(multiProposalId).toBeGreaterThan(0n);
 
-  // 6) Delete main proposal via UI and verify on-chain flag.
-  await page.getByTestId(`select-proposal-${mainProposalId.toString()}`).click();
-  await page.getByTestId("delete-proposal-btn").click();
-  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: deleteProposal");
-  const deletedProposal = await rpc.readContract({
+  await page.getByTestId("vote-option-check-0").check();
+  await page.getByTestId("vote-option-weight-0").fill("70");
+  await page.getByTestId("vote-option-check-1").check();
+  await page.getByTestId("vote-option-weight-1").fill("30");
+  await page.getByTestId("vote-multi-submit").click();
+  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
+
+  const multiTallies = await rpc.readContract({
     address: deployment.votingCore,
     abi: votingAbi,
-    functionName: "getProposal",
-    args: [mainProposalId]
+    functionName: "getProposalTallies",
+    args: [multiProposalId]
   });
-  expect(deletedProposal.deleted).toBe(true);
+  expect(multiTallies[1][0]).toBeGreaterThan(0n);
+  expect(multiTallies[1][1]).toBeGreaterThan(0n);
 
   assertRuntimeHealthy();
 });

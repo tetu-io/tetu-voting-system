@@ -6,6 +6,9 @@ export const votingAbi = [
   { type: "error", name: "ProposalNotStarted", inputs: [] },
   { type: "error", name: "ProposalEnded", inputs: [] },
   { type: "error", name: "InvalidOption", inputs: [] },
+  { type: "error", name: "InvalidVoteSplit", inputs: [] },
+  { type: "error", name: "DuplicateOption", inputs: [] },
+  { type: "error", name: "MultiSelectNotAllowed", inputs: [] },
   { type: "error", name: "NoVotingPower", inputs: [] },
   { type: "error", name: "AlreadyDeleted", inputs: [] },
   {
@@ -51,7 +54,8 @@ export const votingAbi = [
       { name: "description", type: "string" },
       { name: "options", type: "string[]" },
       { name: "startAt", type: "uint64" },
-      { name: "endAt", type: "uint64" }
+      { name: "endAt", type: "uint64" },
+      { name: "allowMultipleChoices", type: "bool" }
     ],
     outputs: [{ name: "", type: "uint256" }]
   },
@@ -100,7 +104,8 @@ export const votingAbi = [
           { name: "startAt", type: "uint64" },
           { name: "endAt", type: "uint64" },
           { name: "deleted", type: "bool" },
-          { name: "totalVotesCast", type: "uint256" }
+          { name: "totalVotesCast", type: "uint256" },
+          { name: "allowMultipleChoices", type: "bool" }
         ]
       }
     ]
@@ -121,7 +126,8 @@ export const votingAbi = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "proposalId", type: "uint256" },
-      { name: "optionIndex", type: "uint16" }
+      { name: "optionIndices", type: "uint16[]" },
+      { name: "weightsBps", type: "uint16[]" }
     ],
     outputs: []
   },
@@ -141,7 +147,9 @@ export const votingAbi = [
           { name: "hasVoted", type: "bool" },
           { name: "optionIndex", type: "uint16" },
           { name: "weight", type: "uint256" },
-          { name: "updatedAt", type: "uint64" }
+          { name: "updatedAt", type: "uint64" },
+          { name: "optionIndices", type: "uint16[]" },
+          { name: "weightsBps", type: "uint16[]" }
         ]
       }
     ]
@@ -206,7 +214,8 @@ export const votingAbi = [
       { indexed: true, name: "spaceId", type: "uint256" },
       { indexed: true, name: "author", type: "address" },
       { indexed: false, name: "startAt", type: "uint64" },
-      { indexed: false, name: "endAt", type: "uint64" }
+      { indexed: false, name: "endAt", type: "uint64" },
+      { indexed: false, name: "allowMultipleChoices", type: "bool" }
     ]
   },
   {
@@ -216,8 +225,10 @@ export const votingAbi = [
     inputs: [
       { indexed: true, name: "proposalId", type: "uint256" },
       { indexed: true, name: "voter", type: "address" },
-      { indexed: false, name: "optionIndex", type: "uint16" },
-      { indexed: false, name: "weight", type: "uint256" }
+      { indexed: false, name: "optionIndices", type: "uint16[]" },
+      { indexed: false, name: "weightsBps", type: "uint16[]" },
+      { indexed: false, name: "distributedWeights", type: "uint256[]" },
+      { indexed: false, name: "totalWeight", type: "uint256" }
     ]
   },
   {
@@ -227,10 +238,11 @@ export const votingAbi = [
     inputs: [
       { indexed: true, name: "proposalId", type: "uint256" },
       { indexed: true, name: "voter", type: "address" },
-      { indexed: false, name: "oldOptionIndex", type: "uint16" },
-      { indexed: false, name: "oldWeight", type: "uint256" },
-      { indexed: false, name: "newOptionIndex", type: "uint16" },
-      { indexed: false, name: "newWeight", type: "uint256" }
+      { indexed: false, name: "oldTotalWeight", type: "uint256" },
+      { indexed: false, name: "optionIndices", type: "uint16[]" },
+      { indexed: false, name: "weightsBps", type: "uint16[]" },
+      { indexed: false, name: "distributedWeights", type: "uint256[]" },
+      { indexed: false, name: "newTotalWeight", type: "uint256" }
     ]
   },
   {

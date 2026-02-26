@@ -50,6 +50,7 @@ program
   .requiredOption("--options <options>")
   .requiredOption("--start-at <startAt>")
   .requiredOption("--end-at <endAt>")
+  .option("--allow-multi")
   .requiredOption("--private-key <privateKey>")
   .option("--rpc-url <rpcUrl>")
   .option("--contract <contract>")
@@ -68,7 +69,8 @@ program
       opts.description,
       parsedOptions,
       BigInt(opts.startAt),
-      BigInt(opts.endAt)
+      BigInt(opts.endAt),
+      Boolean(opts.allowMulti)
     );
     const receipt = await tx.wait();
     const event = receipt.logs
@@ -105,7 +107,7 @@ program
     const contract = new ethers.Contract(getContractAddress(opts), votingAbi, signer);
     const before = await contract.getVoteReceipt(BigInt(opts.proposalId), signer.address);
     const wasFirstVote = !before.hasVoted;
-    const tx = await contract.vote(BigInt(opts.proposalId), Number(opts.option));
+    const tx = await contract.vote(BigInt(opts.proposalId), [Number(opts.option)], [10000]);
     await tx.wait();
     const after = await contract.getVoteReceipt(BigInt(opts.proposalId), signer.address);
 

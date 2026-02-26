@@ -41,7 +41,8 @@ async function main() {
       "Vote now",
       ["Yes", "No", "Abstain"],
       BigInt(now - 60),
-      BigInt(now + 3600)
+      BigInt(now + 3600),
+      true
     )
   ).wait();
   await (
@@ -51,7 +52,8 @@ async function main() {
       "Voting should be closed",
       ["Option A", "Option B"],
       BigInt(now - 3600),
-      BigInt(now - 60)
+      BigInt(now - 60),
+      false
     )
   ).wait();
 

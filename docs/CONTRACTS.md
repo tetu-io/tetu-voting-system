@@ -36,13 +36,16 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 - `endAt`
 - `deleted` (`bool`)
 - `totalVotesCast` (raw count of cast/recast actions)
+- `allowMultipleChoices` (`bool`)
 
 ## 3.3 Vote State
 - latest vote receipt per user/proposal:
   - `hasVoted` (`bool`)
-  - `optionIndex` (`uint16`)
+  - `optionIndex` (`uint16`, backward-compatible first selected option)
   - `weight` (`uint256`)
   - `updatedAt` (`uint64`)
+  - `optionIndices` (`uint16[]`)
+  - `weightsBps` (`uint16[]`, sum = 10000)
 - tallies:
   - `proposalOptionWeight[proposalId][optionIndex] => uint256`
 
@@ -60,10 +63,10 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - `setAdmin(spaceId, account, allowed)`
   - `setProposer(spaceId, account, allowed)`
 - Proposal:
-  - `createProposal(spaceId, title, description, options, startAt, endAt)`
+  - `createProposal(spaceId, title, description, options, startAt, endAt, allowMultipleChoices)`
   - `deleteProposal(proposalId)`
 - Voting:
-  - `vote(proposalId, optionIndex)` (supports re-vote replace)
+  - `vote(proposalId, optionIndices, weightsBps)` (supports re-vote replace)
 - Read:
   - `getSpace(spaceId)`
   - `getProposal(proposalId)`
@@ -80,6 +83,10 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - proposal exists and not deleted,
   - now >= `startAt`,
   - now < `endAt`,
+  - `optionIndices.length == weightsBps.length > 0`,
+  - for single-choice proposal: exactly one selected option,
+  - for multi-choice proposal: unique option indices only,
+  - each bps > 0 and total `weightsBps == 10000`,
   - option index in range,
   - token balance > 0.
 - `deleteProposal`:
@@ -90,12 +97,13 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 
 Given voter `V` for proposal `P`:
 1. `newWeight = IERC20(token).balanceOf(V)`.
-2. If no previous vote:
-   - add `newWeight` to selected option tally.
-3. If previous vote exists:
-   - subtract `oldWeight` from `oldOption`,
-   - add `newWeight` to `newOption`.
-4. Save receipt (`optionIndex`, `newWeight`, `updatedAt`).
+2. Split `newWeight` across selected options according to `weightsBps` (sum 100%).
+3. If no previous vote:
+   - add each split portion to selected option tallies.
+4. If previous vote exists:
+   - subtract old split portions from old selected options,
+   - add new split portions to new selected options.
+5. Save receipt (`optionIndices`, `weightsBps`, `newWeight`, `updatedAt`).
 
 This keeps tallies consistent with the latest recorded vote per voter.
 
@@ -104,10 +112,10 @@ This keeps tallies consistent with the latest recorded vote per voter.
 - `SpaceCreated(spaceId, owner, token, name)`
 - `SpaceAdminUpdated(spaceId, account, allowed)`
 - `SpaceProposerUpdated(spaceId, account, allowed)`
-- `ProposalCreated(proposalId, spaceId, author, startAt, endAt)`
+- `ProposalCreated(proposalId, spaceId, author, startAt, endAt, allowMultipleChoices)`
 - `ProposalDeleted(proposalId, author)`
-- `VoteCast(proposalId, voter, optionIndex, weight)`
-- `VoteRecast(proposalId, voter, oldOptionIndex, oldWeight, newOptionIndex, newWeight)`
+- `VoteCast(proposalId, voter, optionIndices, weightsBps, distributedWeights, totalWeight)`
+- `VoteRecast(proposalId, voter, oldTotalWeight, optionIndices, weightsBps, distributedWeights, newTotalWeight)`
 - `Upgraded(implementation)` (from UUPS stack)
 
 ## 9. Custom Errors
@@ -119,6 +127,9 @@ This keeps tallies consistent with the latest recorded vote per voter.
 - `ProposalNotStarted()`
 - `ProposalEnded()`
 - `InvalidOption()`
+- `InvalidVoteSplit()`
+- `DuplicateOption()`
+- `MultiSelectNotAllowed()`
 - `NoVotingPower()`
 - `AlreadyDeleted()`
 

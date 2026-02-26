@@ -1,0 +1,9 @@
+chainId: 137
+rpcUrl: ""
+confirmations: 2
+verify: false
+writeSharedArtifacts: true
+# Optional. Must be the same EOA as deployer when set.
+# initialOwner: "0x0000000000000000000000000000000000000000"
+# Optional. Use only to migrate an already deployed proxy into hardhat-deploy state.
+# existingProxy: "0x0000000000000000000000000000000000000000"

@@ -18,6 +18,9 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     error NoVotingPower();
     error AlreadyDeleted();
     error SpaceNotFound();
+    error InvalidVoteSplit();
+    error DuplicateOption();
+    error MultiSelectNotAllowed();
 
     struct Space {
         uint256 id;
@@ -38,6 +41,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         uint64 endAt;
         bool deleted;
         uint256 totalVotesCast;
+        bool allowMultipleChoices;
     }
 
     struct VoteReceipt {
@@ -45,7 +49,11 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         uint16 optionIndex;
         uint256 weight;
         uint64 updatedAt;
+        uint16[] optionIndices;
+        uint16[] weightsBps;
     }
+
+    uint16 private constant BPS_DENOMINATOR = 10_000;
 
     uint256 private _nextSpaceId;
     uint256 private _nextProposalId;
@@ -65,17 +73,26 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         uint256 indexed spaceId,
         address indexed author,
         uint64 startAt,
-        uint64 endAt
+        uint64 endAt,
+        bool allowMultipleChoices
     );
     event ProposalDeleted(uint256 indexed proposalId, address indexed author);
-    event VoteCast(uint256 indexed proposalId, address indexed voter, uint16 optionIndex, uint256 weight);
+    event VoteCast(
+        uint256 indexed proposalId,
+        address indexed voter,
+        uint16[] optionIndices,
+        uint16[] weightsBps,
+        uint256[] distributedWeights,
+        uint256 totalWeight
+    );
     event VoteRecast(
         uint256 indexed proposalId,
         address indexed voter,
-        uint16 oldOptionIndex,
-        uint256 oldWeight,
-        uint16 newOptionIndex,
-        uint256 newWeight
+        uint256 oldTotalWeight,
+        uint16[] optionIndices,
+        uint16[] weightsBps,
+        uint256[] distributedWeights,
+        uint256 newTotalWeight
     );
 
     function initialize(address initialOwner) external initializer {
@@ -122,7 +139,8 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         string calldata description,
         string[] calldata options,
         uint64 startAt,
-        uint64 endAt
+        uint64 endAt,
+        bool allowMultipleChoices
     ) external returns (uint256) {
         Space storage s = _spaces[spaceId];
         if (s.id == 0) revert SpaceNotFound();
@@ -139,11 +157,12 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         p.description = description;
         p.startAt = startAt;
         p.endAt = endAt;
+        p.allowMultipleChoices = allowMultipleChoices;
         for (uint256 i = 0; i < options.length; i++) {
             p.options.push(options[i]);
         }
 
-        emit ProposalCreated(proposalId, spaceId, msg.sender, startAt, endAt);
+        emit ProposalCreated(proposalId, spaceId, msg.sender, startAt, endAt, allowMultipleChoices);
         return proposalId;
     }
 
@@ -156,40 +175,120 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         emit ProposalDeleted(proposalId, msg.sender);
     }
 
-    function vote(uint256 proposalId, uint16 optionIndex) external nonReentrant {
+    function vote(uint256 proposalId, uint16[] calldata optionIndices, uint16[] calldata weightsBps) external nonReentrant {
         Proposal storage p = _proposals[proposalId];
         if (p.id == 0) revert ProposalNotFound();
         if (p.deleted) revert ProposalIsDeleted();
         if (block.timestamp < p.startAt) revert ProposalNotStarted();
         if (block.timestamp >= p.endAt) revert ProposalEnded();
-        if (optionIndex >= p.options.length) revert InvalidOption();
+        _validateVotePayload(p, optionIndices, weightsBps);
 
         Space storage s = _spaces[p.spaceId];
         uint256 newWeight = IERC20(s.token).balanceOf(msg.sender);
         if (newWeight == 0) revert NoVotingPower();
 
+        uint256[] memory distributedWeights = _computeDistributedWeights(newWeight, weightsBps);
+
         VoteReceipt storage receipt = _voteReceipts[proposalId][msg.sender];
         if (receipt.hasVoted) {
-            _proposalOptionWeight[proposalId][receipt.optionIndex] -= receipt.weight;
-            _proposalOptionWeight[proposalId][optionIndex] += newWeight;
+            _removePreviousVoteFromTallies(proposalId, receipt);
+            _applyVoteToTallies(proposalId, optionIndices, distributedWeights);
             emit VoteRecast(
                 proposalId,
                 msg.sender,
-                receipt.optionIndex,
                 receipt.weight,
-                optionIndex,
+                optionIndices,
+                weightsBps,
+                distributedWeights,
                 newWeight
             );
         } else {
-            _proposalOptionWeight[proposalId][optionIndex] += newWeight;
-            emit VoteCast(proposalId, msg.sender, optionIndex, newWeight);
+            _applyVoteToTallies(proposalId, optionIndices, distributedWeights);
+            emit VoteCast(proposalId, msg.sender, optionIndices, weightsBps, distributedWeights, newWeight);
         }
 
+        delete receipt.optionIndices;
+        delete receipt.weightsBps;
+        for (uint256 i = 0; i < optionIndices.length; i++) {
+            receipt.optionIndices.push(optionIndices[i]);
+            receipt.weightsBps.push(weightsBps[i]);
+        }
         receipt.hasVoted = true;
-        receipt.optionIndex = optionIndex;
+        receipt.optionIndex = optionIndices[0];
         receipt.weight = newWeight;
         receipt.updatedAt = uint64(block.timestamp);
         p.totalVotesCast += 1;
+    }
+
+    function _validateVotePayload(Proposal storage p, uint16[] calldata optionIndices, uint16[] calldata weightsBps)
+        private
+        view
+    {
+        if (optionIndices.length == 0 || optionIndices.length != weightsBps.length) revert InvalidVoteSplit();
+        if (!p.allowMultipleChoices && optionIndices.length != 1) revert MultiSelectNotAllowed();
+
+        bool[] memory seenOptions = new bool[](p.options.length);
+        uint256 totalBps = 0;
+        for (uint256 i = 0; i < optionIndices.length; i++) {
+            uint16 optionIndex = optionIndices[i];
+            if (optionIndex >= p.options.length) revert InvalidOption();
+            if (weightsBps[i] == 0) revert InvalidVoteSplit();
+            if (seenOptions[optionIndex]) revert DuplicateOption();
+            seenOptions[optionIndex] = true;
+            totalBps += weightsBps[i];
+        }
+        if (totalBps != BPS_DENOMINATOR) revert InvalidVoteSplit();
+    }
+
+    function _computeDistributedWeights(uint256 totalWeight, uint16[] calldata weightsBps)
+        private
+        pure
+        returns (uint256[] memory)
+    {
+        uint256[] memory distributedWeights = new uint256[](weightsBps.length);
+        uint256 allocatedWeight = 0;
+        for (uint256 i = 0; i < weightsBps.length; i++) {
+            uint256 portion = i == weightsBps.length - 1
+                ? totalWeight - allocatedWeight
+                : (totalWeight * weightsBps[i]) / BPS_DENOMINATOR;
+            distributedWeights[i] = portion;
+            allocatedWeight += portion;
+        }
+        return distributedWeights;
+    }
+
+    function _applyVoteToTallies(uint256 proposalId, uint16[] calldata optionIndices, uint256[] memory distributedWeights)
+        private
+    {
+        for (uint256 i = 0; i < optionIndices.length; i++) {
+            _proposalOptionWeight[proposalId][optionIndices[i]] += distributedWeights[i];
+        }
+    }
+
+    function _removePreviousVoteFromTallies(uint256 proposalId, VoteReceipt storage receipt) private {
+        if (receipt.optionIndices.length == 0) {
+            _proposalOptionWeight[proposalId][receipt.optionIndex] -= receipt.weight;
+            return;
+        }
+
+        for (uint256 i = 0; i < receipt.optionIndices.length; i++) {
+            uint256 priorPortion = i == receipt.optionIndices.length - 1
+                ? receipt.weight - _portionWeightSum(receipt.weight, receipt.weightsBps, i)
+                : (receipt.weight * receipt.weightsBps[i]) / BPS_DENOMINATOR;
+            _proposalOptionWeight[proposalId][receipt.optionIndices[i]] -= priorPortion;
+        }
+    }
+
+    function _portionWeightSum(uint256 totalWeight, uint16[] storage weightsBps, uint256 upToExclusive)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 weighted = 0;
+        for (uint256 i = 0; i < upToExclusive; i++) {
+            weighted += (totalWeight * weightsBps[i]) / BPS_DENOMINATOR;
+        }
+        return weighted;
     }
 
     function getSpace(uint256 spaceId) external view returns (Space memory) {

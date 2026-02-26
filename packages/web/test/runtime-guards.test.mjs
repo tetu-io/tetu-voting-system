@@ -45,5 +45,17 @@ assert(
   appSource.includes("Connect Wallet"),
   "App.tsx must expose a connect wallet action in default UI."
 );
+assert(
+  appSource.includes("VITE_USE_MOCK"),
+  "App.tsx must support env-driven mock mode toggle."
+);
+assert(
+  appSource.includes("Connect Mock Wallet"),
+  "App.tsx must expose mock wallet connect action."
+);
+assert(
+  wagmiSource.includes("VITE_USE_MOCK"),
+  "wagmi.ts must be aware of mock mode bootstrap."
+);
 
 console.log("Web runtime guards passed");

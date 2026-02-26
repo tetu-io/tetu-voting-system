@@ -11,12 +11,14 @@
   - proxy deployment + initialization,
   - upgrade smoke path.
 - UI E2E tests (Playwright):
-  - wallet connect,
-  - create proposal,
-  - cast vote,
-  - recast vote,
-  - reject after end time,
-  - verify UI values match on-chain reads.
+  - wallet connect + header menu/logout,
+  - create space via modal,
+  - navigate route-based pages,
+  - set admin in space settings,
+  - create proposal from dedicated page,
+  - cast single-choice vote,
+  - cast multi-choice weighted vote (percent split = 100%),
+  - verify voters list/tallies and on-chain reads.
 
 ## 2. One-command Local Stand
 
@@ -46,6 +48,13 @@ This variant injects:
 - `VITE_CHAIN_ID=31337`
 - deployed `VITE_VOTING_CONTRACT`
 - deterministic `VITE_TEST_PRIVATE_KEY` for in-UI test wallet connect.
+- `VITE_USE_MOCK=false` (real-contract e2e mode stays default).
+
+Manual UI mock run (wallet+contracts fully in-memory, no on-chain assertions):
+
+```bash
+VITE_USE_MOCK=true npm run dev -w packages/web
+```
 
 ## 3. Seed Data Requirements
 
@@ -60,15 +69,12 @@ This variant injects:
 
 ## 4.1 Full frontend scenario (single e2e)
 - Connect test wallet from UI.
-- Create space from UI.
-- Set admin from UI.
-- Set proposer from UI.
-- Create proposal from UI.
-- Cast first vote from UI.
-- Re-cast vote from UI.
-- Create short-lived proposal and assert ended vote rejection from UI.
-- Delete proposal from UI.
-- Verify on-chain reads (space/roles/proposal/tallies/receipt/deleted flag) after each critical step.
+- Create space from modal on `/`.
+- Open settings page and set admin.
+- Open dedicated proposal-create page and create proposal.
+- Open proposal details page and cast single-choice vote.
+- Create multi-choice proposal and cast weighted split vote.
+- Verify voters/tallies in UI and on-chain.
 
 ## 4.2 Runtime health checks
 - Fail test on `pageerror`.
@@ -77,8 +83,8 @@ This variant injects:
 
 ## 5. Deterministic Time Control
 
-- For short-lived proposal checks, use very small `endAt` windows in e2e input and assert rejection path after expiration.
-- Optional contract-level boundary tests still use Hardhat helpers (`evm_setNextBlockTimestamp`, `evm_increaseTime`, `evm_mine`) in unit/integration suites.
+- For ended-proposal checks in frontend e2e, use RPC time control (`evm_increaseTime` + `evm_mine`) instead of fixed waits.
+- Contract-level boundary tests also use Hardhat helpers (`evm_setNextBlockTimestamp`, `evm_increaseTime`, `evm_mine`) in unit/integration suites.
 
 ## 6. Definition of Done for Test Suite
 

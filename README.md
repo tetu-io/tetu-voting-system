@@ -21,9 +21,20 @@ Key variables:
 - `VITE_RPC_URL`
 - `VITE_CHAIN_ID`
 - `VITE_VOTING_CONTRACT`
+- `VITE_BLOCK_TIME_SECONDS` (optional, UI hint for approximate block numbers on proposal create page)
+- `VITE_USE_MOCK` (optional, when `true` UI uses internal in-memory mock wallet + mock contracts)
 - `VITE_TEST_PRIVATE_KEY` (optional, used by e2e test wallet flow)
 - `CLI_RPC_URL`
 - `CLI_CONTRACT`
+
+## Frontend pages
+
+The UI is route-based and includes:
+- `/` - spaces table + create-space modal.
+- `/spaces/:spaceId` - proposals table with pagination and quick actions.
+- `/spaces/:spaceId/proposals/new` - dedicated proposal creation page (supports single-choice or multi-choice proposals).
+- `/spaces/:spaceId/settings` - space settings (admin role assignment).
+- `/proposals/:proposalId` - tallies, voters table, and vote action (single click for single-choice, percentage split form for multi-choice).
 
 ## Install
 

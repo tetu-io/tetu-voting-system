@@ -12,8 +12,10 @@ async function deployFixture() {
   const voting = await upgrades.deployProxy(Voting, [owner.address], { kind: "uups" });
   await voting.waitForDeployment();
 
+  await (await token.mint(owner.address, ethers.parseEther("100"))).wait();
   await (await token.mint(voter.address, ethers.parseEther("100"))).wait();
   await (await token.mint(proposer.address, ethers.parseEther("100"))).wait();
+  await (await token.mint(other.address, ethers.parseEther("100"))).wait();
 
   const tx = await voting.createSpace(await token.getAddress(), "Space", "Desc");
   const receipt = await tx.wait();
@@ -32,6 +34,8 @@ async function deployFixture() {
 }
 
 describe("VotingCore", function () {
+  const DELEGATION_ID = ethers.keccak256(ethers.toUtf8Bytes("space:1"));
+
   it("allows owner to assign admin and proposer", async function () {
     const { voting, spaceId, admin, proposer } = await loadFixture(deployFixture);
 
@@ -183,7 +187,13 @@ describe("VotingCore", function () {
   });
 
   it("retains state after UUPS upgrade", async function () {
-    const { voting, spaceId } = await loadFixture(deployFixture);
+    const { voting, spaceId, owner } = await loadFixture(deployFixture);
+    const DelegateRegistry = await ethers.getContractFactory("DelegateRegistry");
+    const delegateRegistry = await DelegateRegistry.deploy();
+    await delegateRegistry.waitForDeployment();
+    await (await voting.connect(owner).setDelegateRegistry(await delegateRegistry.getAddress())).wait();
+    await (await voting.connect(owner).setSpaceDelegationId(spaceId, DELEGATION_ID)).wait();
+
     const V2 = await ethers.getContractFactory("VotingCoreV2");
     const upgraded = await upgrades.upgradeProxy(await voting.getAddress(), V2, {
       unsafeAllow: ["missing-initializer"]
@@ -191,6 +201,72 @@ describe("VotingCore", function () {
     await upgraded.waitForDeployment();
     const space = await upgraded.getSpace(spaceId);
     expect(space.id).to.equal(spaceId);
+    expect(space.delegationId).to.equal(DELEGATION_ID);
+    expect(await upgraded.delegateRegistry()).to.equal(await delegateRegistry.getAddress());
     expect(await upgraded.version()).to.equal("v2");
+  });
+
+  it("allows owner to set delegate registry", async function () {
+    const { voting, owner, admin } = await loadFixture(deployFixture);
+    const DelegateRegistry = await ethers.getContractFactory("DelegateRegistry");
+    const delegateRegistry = await DelegateRegistry.deploy();
+    await delegateRegistry.waitForDeployment();
+
+    await expect(voting.connect(admin).setDelegateRegistry(await delegateRegistry.getAddress())).to.be.revertedWithCustomError(
+      voting,
+      "OwnableUnauthorizedAccount"
+    );
+    await expect(voting.connect(owner).setDelegateRegistry(await delegateRegistry.getAddress()))
+      .to.emit(voting, "DelegateRegistryUpdated")
+      .withArgs(await delegateRegistry.getAddress());
+  });
+
+  it("allows owner/admin to set delegation id per space and prevents reassignment", async function () {
+    const { voting, owner, admin, spaceId } = await loadFixture(deployFixture);
+    await (await voting.connect(owner).setAdmin(spaceId, admin.address, true)).wait();
+
+    await expect(voting.connect(admin).setSpaceDelegationId(spaceId, DELEGATION_ID))
+      .to.emit(voting, "SpaceDelegationIdUpdated")
+      .withArgs(spaceId, DELEGATION_ID, admin.address);
+
+    const otherId = ethers.keccak256(ethers.toUtf8Bytes("space:2"));
+    await expect(voting.connect(owner).setSpaceDelegationId(spaceId, otherId)).to.be.revertedWithCustomError(
+      voting,
+      "DelegationIdAlreadySet"
+    );
+  });
+
+  it("counts delegated balances in voting power and supports clear delegate", async function () {
+    const { voting, owner, proposer, voter, other, spaceId } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, proposer.address, true)).wait();
+
+    const DelegateRegistry = await ethers.getContractFactory("DelegateRegistry");
+    const delegateRegistry = await DelegateRegistry.deploy();
+    await delegateRegistry.waitForDeployment();
+    await (await voting.connect(owner).setDelegateRegistry(await delegateRegistry.getAddress())).wait();
+    await (await voting.connect(owner).setSpaceDelegationId(spaceId, DELEGATION_ID)).wait();
+
+    await (await delegateRegistry.connect(other).setDelegate(DELEGATION_ID, voter.address)).wait();
+    await expect(voting.syncDelegationForSpace(spaceId, other.address)).to.emit(voting, "SpaceDelegationSynced");
+    expect(await voting.getVotingPower(spaceId, voter.address)).to.equal(ethers.parseEther("200"));
+
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(proposer)
+        .createProposal(spaceId, "P del", "D", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+    await expect(voting.connect(voter).vote(1, [0], [10000])).to.emit(voting, "VoteCast");
+    const [, talliesAfterDelegate] = await voting.getProposalTallies(1);
+    expect(talliesAfterDelegate[0]).to.equal(ethers.parseEther("200"));
+
+    await (await delegateRegistry.connect(other).clearDelegate(DELEGATION_ID)).wait();
+    await expect(voting.syncDelegationForSpace(spaceId, other.address)).to.emit(voting, "SpaceDelegationSynced");
+    expect(await voting.getVotingPower(spaceId, voter.address)).to.equal(ethers.parseEther("100"));
+
+    await expect(voting.connect(voter).vote(1, [1], [10000])).to.emit(voting, "VoteRecast");
+    const [, talliesAfterClear] = await voting.getProposalTallies(1);
+    expect(talliesAfterClear[0]).to.equal(0);
+    expect(talliesAfterClear[1]).to.equal(ethers.parseEther("100"));
   });
 });

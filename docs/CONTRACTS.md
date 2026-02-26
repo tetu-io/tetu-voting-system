@@ -21,6 +21,7 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 - `owner` (`address`)
 - `name` (`string`)
 - `description` (`string`)
+- `delegationId` (`bytes32`, manually set per space)
 - role mappings:
   - `admins[address] => bool`
   - `proposers[address] => bool`
@@ -62,16 +63,23 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - `createSpace(token, name, description)`
   - `setAdmin(spaceId, account, allowed)`
   - `setProposer(spaceId, account, allowed)`
+- `setSpaceDelegationId(spaceId, delegationId)`
 - Proposal:
   - `createProposal(spaceId, title, description, options, startAt, endAt, allowMultipleChoices)`
   - `deleteProposal(proposalId)`
 - Voting:
   - `vote(proposalId, optionIndices, weightsBps)` (supports re-vote replace)
+- Delegation:
+  - `setDelegateRegistry(registry)`
+  - `syncDelegationForSpace(spaceId, delegator)`
+  - `syncDelegationsForSpace(spaceId, delegators[])`
+  - `setDelegateForSpace(spaceId, delegate)` / `clearDelegateForSpace(spaceId)` (sync wrappers that require registry state to match requested action)
 - Read:
   - `getSpace(spaceId)`
   - `getProposal(proposalId)`
   - `getProposalTallies(proposalId)`
   - `getVoteReceipt(proposalId, voter)`
+  - `getVotingPower(spaceId, voter)`
 
 ## 6. Validation Rules
 
@@ -116,6 +124,11 @@ This keeps tallies consistent with the latest recorded vote per voter.
 - `ProposalDeleted(proposalId, author)`
 - `VoteCast(proposalId, voter, optionIndices, weightsBps, distributedWeights, totalWeight)`
 - `VoteRecast(proposalId, voter, oldTotalWeight, optionIndices, weightsBps, distributedWeights, newTotalWeight)`
+- `DelegateRegistryUpdated(delegateRegistryAddress)`
+- `SpaceDelegationIdUpdated(spaceId, delegationId, updater)`
+- `SpaceDelegateSet(spaceId, delegationId, delegator, delegate)`
+- `SpaceDelegateCleared(spaceId, delegationId, delegator, delegate)`
+- `SpaceDelegationSynced(spaceId, delegationId, delegator, delegate)`
 - `Upgraded(implementation)` (from UUPS stack)
 
 ## 9. Custom Errors
@@ -132,6 +145,10 @@ This keeps tallies consistent with the latest recorded vote per voter.
 - `MultiSelectNotAllowed()`
 - `NoVotingPower()`
 - `AlreadyDeleted()`
+- `DelegateRegistryNotSet()`
+- `DelegationIdNotSet()`
+- `DelegationIdAlreadySet()`
+- `DelegationMismatch()`
 
 ## 10. UUPS Upgrade Constraints
 

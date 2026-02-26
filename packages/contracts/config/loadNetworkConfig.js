@@ -3,7 +3,7 @@ const path = require("path");
 const yaml = require("js-yaml");
 
 function resolveConfigFile(networkName) {
-  const configDir = path.resolve(__dirname, "../../deploy-config");
+  const configDir = path.resolve(__dirname, "../deploy-config");
   return path.join(configDir, `${networkName}.yaml`);
 }
 
@@ -46,6 +46,7 @@ function loadNetworkConfig(networkName) {
 
   assertAddress(config.initialOwner, "initialOwner", filePath);
   assertAddress(config.existingProxy, "existingProxy", filePath);
+  assertAddress(config.delegateRegistry, "delegateRegistry", filePath);
 
   return {
     chainId: config.chainId,
@@ -54,7 +55,8 @@ function loadNetworkConfig(networkName) {
     verify: config.verify ?? false,
     writeSharedArtifacts: config.writeSharedArtifacts ?? true,
     initialOwner: config.initialOwner,
-    existingProxy: config.existingProxy
+    existingProxy: config.existingProxy,
+    delegateRegistry: config.delegateRegistry
   };
 }
 

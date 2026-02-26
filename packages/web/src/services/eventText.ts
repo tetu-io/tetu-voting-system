@@ -17,6 +17,12 @@ export function mapEventToText(log: EventLikeLog): string | null {
     return `SpaceAdminUpdated #${String(args.spaceId)} ${String(args.account)}=${String(args.allowed)}`;
   if (log.eventName === "SpaceProposerUpdated")
     return `SpaceProposerUpdated #${String(args.spaceId)} ${String(args.account)}=${String(args.allowed)}`;
+  if (log.eventName === "SpaceDelegationIdUpdated")
+    return `SpaceDelegationIdUpdated #${String(args.spaceId)}`;
+  if (log.eventName === "SpaceDelegateSet")
+    return `SpaceDelegateSet #${String(args.spaceId)} ${String(args.delegator)}=>${String(args.delegate)}`;
+  if (log.eventName === "SpaceDelegateCleared")
+    return `SpaceDelegateCleared #${String(args.spaceId)} ${String(args.delegator)}`;
   if (log.eventName === "ProposalCreated")
     return `ProposalCreated #${String(args.proposalId)} (space ${String(args.spaceId)})`;
   if (log.eventName === "ProposalDeleted") return `ProposalDeleted #${String(args.proposalId)}`;
@@ -43,5 +49,9 @@ export function normalizeError(error: unknown): string {
   if (raw.includes("NoVotingPower")) return "No voting power";
   if (raw.includes("AlreadyDeleted")) return "Proposal already deleted";
   if (raw.includes("SpaceNotFound")) return "Space not found";
+  if (raw.includes("DelegateRegistryNotSet")) return "Delegate registry is not configured";
+  if (raw.includes("DelegationIdNotSet")) return "Delegation id is not set for this space";
+  if (raw.includes("DelegationIdAlreadySet")) return "Delegation id is already set for this space";
+  if (raw.includes("DelegationMismatch")) return "Delegation registry state does not match requested action";
   return raw;
 }

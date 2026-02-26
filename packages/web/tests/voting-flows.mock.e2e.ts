@@ -52,9 +52,9 @@ test("frontend pages flow in mock mode", async ({ page }) => {
   await expect(page).toHaveURL(/\/proposals\/\d+$/);
 
   await page.getByTestId("vote-option-check-0").check();
-  await page.getByTestId("vote-option-weight-0").fill("60");
+  await page.getByTestId("vote-option-weight-0").fill("1");
   await page.getByTestId("vote-option-check-1").check();
-  await page.getByTestId("vote-option-weight-1").fill("40");
+  await page.getByTestId("vote-option-weight-1").fill("3");
   await page.getByTestId("vote-multi-submit").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
 

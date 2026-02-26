@@ -3,3 +3,5 @@ rpcUrl: "http://127.0.0.1:8545"
 confirmations: 1
 verify: false
 writeSharedArtifacts: true
+# Optional delegation registry for local network.
+# delegateRegistry: "0x0000000000000000000000000000000000000000"

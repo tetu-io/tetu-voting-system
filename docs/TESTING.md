@@ -4,6 +4,8 @@
 
 - Contract unit tests (Hardhat):
   - roles/access,
+  - delegate registry/delegation id controls,
+  - delegated voting power + sync flow,
   - proposal lifecycle checks,
   - vote/re-vote tally math,
   - ended proposal rejection.
@@ -16,6 +18,8 @@
   - create space via modal,
   - navigate route-based pages,
   - set admin in space settings,
+  - set delegation id in space settings,
+  - delegate and clear delegate flow,
   - create proposal from dedicated page,
   - cast single-choice vote,
   - cast multi-choice weighted vote (percent split = 100%),
@@ -72,8 +76,11 @@ VITE_USE_MOCK=true npm run dev -w packages/web
 - Connect test wallet from UI.
 - Create space from modal on `/`.
 - Open settings page and set admin.
+- Configure space delegation id.
+- Delegate voting power from one wallet to another and sync state.
 - Open dedicated proposal-create page and create proposal.
 - Open proposal details page and cast single-choice vote.
+- Clear delegation and verify recast uses updated weight.
 - Create multi-choice proposal and cast weighted split vote.
 - Verify voters/tallies in UI and on-chain.
 

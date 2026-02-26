@@ -19,7 +19,7 @@ export type PagedResult<T> = {
 };
 
 const readSpaceAbi = parseAbiItem(
-  "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description))"
+  "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description, bytes32 delegationId))"
 );
 const readProposalAbi = parseAbiItem(
   "function getProposal(uint256 proposalId) view returns ((uint256 id, uint256 spaceId, address author, string title, string description, string[] options, uint64 startAt, uint64 endAt, bool deleted, uint256 totalVotesCast, bool allowMultipleChoices))"
@@ -163,7 +163,8 @@ export async function fetchRealSpaces(client: PublicClient, address: `0x${string
           token: raw.token as WalletAddress,
           owner: raw.owner as WalletAddress,
           name: raw.name,
-          description: raw.description
+          description: raw.description,
+          delegationId: raw.delegationId as `0x${string}`
         } satisfies SpaceView;
       } catch {
         return null;

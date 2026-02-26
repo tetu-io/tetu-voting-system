@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { loadNetworkConfig } = require("./utils/loadNetworkConfig");
+const { loadNetworkConfig } = require("../config/loadNetworkConfig");
 
 const PROXY_DEPLOYMENT_NAME = "VotingCoreProxy";
 const IMPL_DEPLOYMENT_NAME = "VotingCore_Implementation";
@@ -13,7 +13,16 @@ function ensureSingleEoaControl(deployer, initialOwner) {
   }
 }
 
-function writeSharedArtifacts({ networkName, chainId, deployer, owner, proxyAddress, implementationAddress, abi }) {
+function writeSharedArtifacts({
+  networkName,
+  chainId,
+  deployer,
+  owner,
+  proxyAddress,
+  implementationAddress,
+  delegateRegistry,
+  abi
+}) {
   const sharedDir = path.resolve(__dirname, "../../shared/src");
   if (!fs.existsSync(sharedDir)) {
     fs.mkdirSync(sharedDir, { recursive: true });
@@ -25,7 +34,8 @@ function writeSharedArtifacts({ networkName, chainId, deployer, owner, proxyAddr
     deployer,
     owner,
     votingCore: proxyAddress,
-    implementation: implementationAddress
+    implementation: implementationAddress,
+    delegateRegistry
   };
 
   const deploymentPath = path.join(sharedDir, `deployment.${networkName}.json`);
@@ -119,6 +129,19 @@ module.exports = async function deployVotingCore(hre) {
     }
   }
 
+  if (cfg.delegateRegistry !== undefined) {
+    const voting = await ethers.getContractAt("VotingCore", proxyAddress);
+    const currentDelegateRegistry = await voting.delegateRegistry();
+    if (currentDelegateRegistry.toLowerCase() !== cfg.delegateRegistry.toLowerCase()) {
+      const tx = await voting.setDelegateRegistry(cfg.delegateRegistry);
+      await tx.wait();
+      log(`[${network.name}] Delegate registry updated: ${currentDelegateRegistry} -> ${cfg.delegateRegistry}`);
+    }
+  }
+
+  const voting = await ethers.getContractAt("VotingCore", proxyAddress);
+  const resolvedDelegateRegistry = await voting.delegateRegistry();
+
   if (cfg.writeSharedArtifacts) {
     const chainId = Number((await ethers.provider.getNetwork()).chainId);
     writeSharedArtifacts({
@@ -128,6 +151,7 @@ module.exports = async function deployVotingCore(hre) {
       owner: initialOwner,
       proxyAddress,
       implementationAddress,
+      delegateRegistry: resolvedDelegateRegistry,
       abi: artifact.abi
     });
   }

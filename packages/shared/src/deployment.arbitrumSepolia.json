@@ -1,0 +1,10 @@
+{
+  "chainId": 421614,
+  "network": "arbitrumSepolia",
+  "deployer": "0xbbbbb8C4364eC2ce52c59D2Ed3E56F307E529a94",
+  "owner": "0xbbbbb8C4364eC2ce52c59D2Ed3E56F307E529a94",
+  "votingCore": "0x549aE613Bb492CCf68A6620848C80262709a1fb4",
+  "implementation": "0x88a12B7b6525c0B46c0c200405f49cE0E72D71Aa",
+  "delegateRegistry": "0x0000000000000000000000000000000000000000",
+  "token": "0x0EFc2D2D054383462F2cD72eA2526Ef7687E1016"
+}

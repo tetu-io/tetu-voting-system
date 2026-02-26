@@ -26,24 +26,51 @@ assert(
   "Regression: wagmi.ts must not call createConfig(getDefaultConfig(...))."
 );
 assert(
-  /connectors\s*:\s*\[\s*injected\s*\(\s*\)\s*]/m.test(wagmiSource),
-  "wagmi.ts must define injected connector explicitly."
+  wagmiSource.includes("connectorsForWallets"),
+  "wagmi.ts must configure connectors via RainbowKit connectorsForWallets."
+);
+assert(
+  wagmiSource.includes("rainbowWallet"),
+  "wagmi.ts must configure Rainbow wallet connector."
+);
+assert(
+  wagmiSource.includes("walletConnectWallet"),
+  "wagmi.ts must configure WalletConnect connector."
+);
+assert(
+  wagmiSource.includes("VITE_WALLETCONNECT_PROJECT_ID"),
+  "wagmi.ts must read WalletConnect project id from env."
+);
+assert(
+  wagmiSource.includes("connectors,"),
+  "wagmi.ts must pass RainbowKit connectors into createConfig."
+);
+assert(
+  wagmiSource.includes("getConfiguredChain"),
+  "wagmi.ts must resolve chain metadata from chain id."
 );
 assert(
   !wagmiSource.includes("demo-local-project-id"),
   "wagmi.ts must not include demo WalletConnect projectId in local mode."
 );
 
-// Guard against reintroducing provider combination that depends on remote appkit config.
 assert(
-  !mainSource.includes("RainbowKitProvider"),
-  "main.tsx must not wrap app with RainbowKitProvider in local mode."
+  mainSource.includes("RainbowKitProvider"),
+  "main.tsx must wrap app with RainbowKitProvider so Login opens Rainbow modal."
 );
 
 // Minimal UX guard for manual smoke: connect CTA should remain visible in fresh state.
 assert(
-  appSource.includes("Connect Wallet"),
-  "App.tsx must expose a connect wallet action in default UI."
+  appSource.includes("Login"),
+  "App.tsx must expose login action in default UI."
+);
+assert(
+  appSource.includes("openConnectModal"),
+  "App.tsx must open RainbowKit connect modal on login click."
+);
+assert(
+  appSource.includes("VITE_ENABLE_TEST_WALLET_LOGIN"),
+  "App.tsx must hide private key login by default and gate it with env flag."
 );
 assert(
   appSource.includes("VITE_USE_MOCK"),
@@ -52,6 +79,22 @@ assert(
 assert(
   appSource.includes("Connect Mock Wallet"),
   "App.tsx must expose mock wallet connect action."
+);
+assert(
+  appSource.includes("useSwitchChain"),
+  "App.tsx must use wagmi useSwitchChain to handle wrong network flows."
+);
+assert(
+  appSource.includes("Switch Network"),
+  "App.tsx must expose a switch-network CTA when wallet chain is wrong."
+);
+assert(
+  appSource.includes("Wrong network. Switch wallet to"),
+  "App.tsx must block write actions when wallet is on wrong chain."
+);
+assert(
+  appSource.includes("chainId: expectedChainId"),
+  "App.tsx must enforce expected chain id in writeContract call."
 );
 assert(
   wagmiSource.includes("VITE_USE_MOCK"),

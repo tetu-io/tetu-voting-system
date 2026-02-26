@@ -12,6 +12,8 @@
     "deploy:network": "hardhat deploy",
     "deploy:polygon": "hardhat deploy --network polygon",
     "deploy:arb-sepolia": "hardhat deploy --network arbitrumSepolia",
+    "deploy:mock:arb-sepolia": "hardhat run scripts/deploy-mock-token.js --network arbitrumSepolia",
+    "mint:mock:arb-sepolia": "hardhat run scripts/mint-mock-token.js --network arbitrumSepolia",
     "seed:local": "hardhat run scripts/seed-local.js --network localhost",
     "upgrade:smoke": "hardhat run scripts/upgrade-smoke.js --network localhost"
   },

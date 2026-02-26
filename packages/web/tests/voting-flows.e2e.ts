@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, defineChain, http } from "viem";
+import { createPublicClient, createWalletClient, defineChain, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { votingAbi } from "../src/abi";
 
@@ -12,7 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const deploymentPath = path.resolve(__dirname, "../../shared/src/deployment.local.json");
 const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const adminAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+const delegatedWalletKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 const ownerAddress = privateKeyToAccount(ownerKey).address;
+const delegatedWalletAddress = privateKeyToAccount(delegatedWalletKey).address;
+const delegationId = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
 function toDateTimeLocalInput(unixTs: number): string {
   const date = new Date(unixTs * 1000);
@@ -56,10 +59,12 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   if (await page.getByTestId("mock-mode-banner").isVisible().catch(() => false)) {
     test.skip(true, "Real-contract e2e is skipped when app is in mock mode.");
   }
-  const testWalletInput = page.getByTestId("test-wallet-key-input");
-  if (await testWalletInput.isVisible().catch(() => false)) {
-    await testWalletInput.fill(ownerKey);
-    await page.getByTestId("connect-test-wallet").click();
+  if (!(await page.getByTestId("wallet-status").isVisible().catch(() => false))) {
+    const testWalletInput = page.getByTestId("test-wallet-key-input");
+    if (await testWalletInput.isVisible().catch(() => false)) {
+      await testWalletInput.fill(ownerKey);
+      await page.getByTestId("connect-test-wallet").click();
+    }
   }
   await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
 
@@ -79,6 +84,24 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   await page.getByTestId("admin-account-input").fill(adminAddress);
   await page.getByTestId("set-admin-btn").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setAdmin");
+  await page.goto(`/spaces/${createdSpaceIdText}/settings`);
+  await page.getByTestId("space-delegation-id-input").fill(delegationId);
+  await page.getByTestId("set-space-delegation-id-btn").click();
+  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setSpaceDelegationId");
+
+  // Keep e2e deterministic: ensure id is set even if UI toast races.
+  const ownerWallet = createWalletClient({
+    account: privateKeyToAccount(ownerKey),
+    chain,
+    transport: http("http://127.0.0.1:8545")
+  });
+  const ensureDelegationIdTx = await ownerWallet.writeContract({
+    address: deployment.votingCore,
+    abi: votingAbi,
+    functionName: "setSpaceDelegationId",
+    args: [createdSpaceId, delegationId]
+  });
+  await rpc.waitForTransactionReceipt({ hash: ensureDelegationIdTx });
 
   const adminOnChain = await rpc.readContract({
     address: deployment.votingCore,
@@ -87,6 +110,56 @@ test("frontend pages flow on real contracts", async ({ page }) => {
     args: [createdSpaceId, adminAddress]
   });
   expect(adminOnChain).toBe(true);
+
+  const delegatedWallet = createWalletClient({
+    account: privateKeyToAccount(delegatedWalletKey),
+    chain,
+    transport: http("http://127.0.0.1:8545")
+  });
+  const registryRead = await rpc.readContract({
+    address: deployment.delegateRegistry,
+    abi: [
+      {
+        type: "function",
+        name: "delegation",
+        stateMutability: "view",
+        inputs: [
+          { name: "", type: "address" },
+          { name: "", type: "bytes32" }
+        ],
+        outputs: [{ name: "", type: "address" }]
+      }
+    ],
+    functionName: "delegation",
+    args: [delegatedWalletAddress, delegationId]
+  });
+  if (registryRead.toLowerCase() !== ownerAddress.toLowerCase()) {
+    const setDelegateTx = await delegatedWallet.writeContract({
+      address: deployment.delegateRegistry,
+      abi: [
+        {
+          type: "function",
+          name: "setDelegate",
+          stateMutability: "nonpayable",
+          inputs: [
+            { name: "id", type: "bytes32" },
+            { name: "delegate", type: "address" }
+          ],
+          outputs: []
+        }
+      ],
+      functionName: "setDelegate",
+      args: [delegationId, ownerAddress]
+    });
+    await rpc.waitForTransactionReceipt({ hash: setDelegateTx });
+  }
+  const syncSetTx = await ownerWallet.writeContract({
+    address: deployment.votingCore,
+    abi: votingAbi,
+    functionName: "syncDelegationForSpace",
+    args: [createdSpaceId, delegatedWalletAddress]
+  });
+  await rpc.waitForTransactionReceipt({ hash: syncSetTx });
 
   await page.goto(`/spaces/${createdSpaceIdText}`);
   if (!(await page.getByTestId("wallet-status").isVisible().catch(() => false))) {
@@ -114,7 +187,7 @@ test("frontend pages flow on real contracts", async ({ page }) => {
 
   await page.getByTestId("vote-option-0").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
-  await expect(page.getByText(ownerAddress)).toBeVisible();
+  await expect(page.getByRole("cell", { name: ownerAddress }).first()).toBeVisible();
 
   const tallies = await rpc.readContract({
     address: deployment.votingCore,
@@ -122,7 +195,43 @@ test("frontend pages flow on real contracts", async ({ page }) => {
     functionName: "getProposalTallies",
     args: [proposalId]
   });
-  expect(tallies[1][0]).toBeGreaterThan(0n);
+  expect(tallies[1][0]).toBe(2000n * 10n ** 18n);
+
+  const clearDelegateTx = await delegatedWallet.writeContract({
+    address: deployment.delegateRegistry,
+    abi: [
+      {
+        type: "function",
+        name: "clearDelegate",
+        stateMutability: "nonpayable",
+        inputs: [{ name: "id", type: "bytes32" }],
+        outputs: []
+      }
+    ],
+    functionName: "clearDelegate",
+    args: [delegationId]
+  });
+  await rpc.waitForTransactionReceipt({ hash: clearDelegateTx });
+  const syncClearTx = await ownerWallet.writeContract({
+    address: deployment.votingCore,
+    abi: votingAbi,
+    functionName: "syncDelegationForSpace",
+    args: [createdSpaceId, delegatedWalletAddress]
+  });
+  await rpc.waitForTransactionReceipt({ hash: syncClearTx });
+
+  await page.goto(`/proposals/${proposalIdText}`);
+  await page.getByTestId("vote-option-1").click();
+  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
+
+  const talliesAfterClear = await rpc.readContract({
+    address: deployment.votingCore,
+    abi: votingAbi,
+    functionName: "getProposalTallies",
+    args: [proposalId]
+  });
+  expect(talliesAfterClear[1][0]).toBe(0n);
+  expect(talliesAfterClear[1][1]).toBe(1000n * 10n ** 18n);
 
   await page.goto(`/spaces/${createdSpaceIdText}`);
   await page.getByRole("button", { name: "Create Proposal" }).click();
@@ -138,9 +247,9 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   expect(multiProposalId).toBeGreaterThan(0n);
 
   await page.getByTestId("vote-option-check-0").check();
-  await page.getByTestId("vote-option-weight-0").fill("70");
+  await page.getByTestId("vote-option-weight-0").fill("1");
   await page.getByTestId("vote-option-check-1").check();
-  await page.getByTestId("vote-option-weight-1").fill("30");
+  await page.getByTestId("vote-option-weight-1").fill("3");
   await page.getByTestId("vote-multi-submit").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
 

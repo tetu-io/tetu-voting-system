@@ -319,12 +319,50 @@
   gap: calc(var(--grid-step) * 4);
 }
 
+.app-toast-stack {
+  position: fixed;
+  right: calc(var(--grid-step) * 6);
+  bottom: calc(var(--grid-step) * 6);
+  display: grid;
+  gap: calc(var(--grid-step) * 2);
+  width: min(420px, calc(100vw - (var(--grid-step) * 6)));
+  z-index: 40;
+  pointer-events: none;
+}
+
+.app-toast {
+  position: relative;
+  pointer-events: auto;
+  padding-right: calc(var(--grid-step) * 8);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.app-toast__body {
+  display: grid;
+  gap: calc(var(--grid-step) * 2);
+}
+
+.app-toast__close {
+  position: absolute;
+  top: calc(var(--grid-step) * 1.5);
+  right: calc(var(--grid-step) * 1.5);
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+}
+
 .page-stack {
   display: grid;
   gap: calc(var(--grid-step) * 4);
 }
 
 @media (max-width: 500px) {
+  .app-toast-stack {
+    right: calc(var(--grid-step) * 3);
+    bottom: calc(var(--grid-step) * 3);
+    width: calc(100vw - (var(--grid-step) * 6));
+  }
+
   .app-shell {
     padding: calc(var(--grid-step) * 3);
   }

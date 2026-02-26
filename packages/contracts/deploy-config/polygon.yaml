@@ -3,6 +3,8 @@ rpcUrl: ""
 confirmations: 2
 verify: false
 writeSharedArtifacts: true
+# Snapshot-compatible DelegateRegistry on Polygon mainnet.
+delegateRegistry: "0x469788fE6E9E9681C6ebF3bF78e7Fd26Fc015446"
 # Optional. Must be the same EOA as deployer when set.
 # initialOwner: "0x0000000000000000000000000000000000000000"
 # Optional. Use only to migrate an already deployed proxy into hardhat-deploy state.

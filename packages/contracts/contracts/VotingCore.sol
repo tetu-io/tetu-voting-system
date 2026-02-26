@@ -7,6 +7,12 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
+interface IDelegateRegistry {
+    function delegation(address delegator, bytes32 id) external view returns (address);
+    function setDelegate(bytes32 id, address delegate) external;
+    function clearDelegate(bytes32 id) external;
+}
+
 contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     error Unauthorized();
     error InvalidTimeRange();
@@ -21,6 +27,10 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     error InvalidVoteSplit();
     error DuplicateOption();
     error MultiSelectNotAllowed();
+    error DelegateRegistryNotSet();
+    error DelegationIdNotSet();
+    error DelegationIdAlreadySet();
+    error DelegationMismatch();
 
     struct Space {
         uint256 id;
@@ -28,6 +38,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         address owner;
         string name;
         string description;
+        bytes32 delegationId;
     }
 
     struct Proposal {
@@ -64,10 +75,23 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     mapping(uint256 => Proposal) private _proposals;
     mapping(uint256 => mapping(address => VoteReceipt)) private _voteReceipts;
     mapping(uint256 => mapping(uint16 => uint256)) private _proposalOptionWeight;
+    address public delegateRegistry;
+    mapping(uint256 => mapping(address => address)) private _spaceDelegates;
+    mapping(uint256 => mapping(address => address[])) private _delegateInboundDelegators;
+    mapping(uint256 => mapping(address => mapping(address => uint256))) private _delegateInboundIndexPlusOne;
 
     event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name);
     event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed);
     event SpaceProposerUpdated(uint256 indexed spaceId, address indexed account, bool allowed);
+    event DelegateRegistryUpdated(address indexed delegateRegistryAddress);
+    event SpaceDelegationIdUpdated(uint256 indexed spaceId, bytes32 indexed delegationId, address indexed updater);
+    event SpaceDelegateSet(uint256 indexed spaceId, bytes32 indexed delegationId, address indexed delegator, address delegate);
+    event SpaceDelegateCleared(
+        uint256 indexed spaceId, bytes32 indexed delegationId, address indexed delegator, address delegate
+    );
+    event SpaceDelegationSynced(
+        uint256 indexed spaceId, bytes32 indexed delegationId, address indexed delegator, address delegate
+    );
     event ProposalCreated(
         uint256 indexed proposalId,
         uint256 indexed spaceId,
@@ -133,6 +157,58 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         emit SpaceProposerUpdated(spaceId, account, allowed);
     }
 
+    function setDelegateRegistry(address registry) external onlyOwner {
+        delegateRegistry = registry;
+        emit DelegateRegistryUpdated(registry);
+    }
+
+    function setSpaceDelegationId(uint256 spaceId, bytes32 delegationId) external {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        if (msg.sender != s.owner && !_spaceAdmins[spaceId][msg.sender]) revert Unauthorized();
+        if (s.delegationId != bytes32(0) && s.delegationId != delegationId) revert DelegationIdAlreadySet();
+        s.delegationId = delegationId;
+        emit SpaceDelegationIdUpdated(spaceId, delegationId, msg.sender);
+    }
+
+    function setDelegateForSpace(uint256 spaceId, address delegate) external {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        if (delegateRegistry == address(0)) revert DelegateRegistryNotSet();
+        if (s.delegationId == bytes32(0)) revert DelegationIdNotSet();
+        if (_readDelegate(msg.sender, s.delegationId) != delegate) revert DelegationMismatch();
+        _updateDelegationIndex(spaceId, msg.sender, delegate);
+        emit SpaceDelegateSet(spaceId, s.delegationId, msg.sender, delegate);
+    }
+
+    function clearDelegateForSpace(uint256 spaceId) external {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        if (delegateRegistry == address(0)) revert DelegateRegistryNotSet();
+        if (s.delegationId == bytes32(0)) revert DelegationIdNotSet();
+        if (_readDelegate(msg.sender, s.delegationId) != address(0)) revert DelegationMismatch();
+        address previousDelegate = _spaceDelegates[spaceId][msg.sender];
+        _updateDelegationIndex(spaceId, msg.sender, address(0));
+        emit SpaceDelegateCleared(spaceId, s.delegationId, msg.sender, previousDelegate);
+    }
+
+    function syncDelegationForSpace(uint256 spaceId, address delegator) public {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        if (delegateRegistry == address(0)) revert DelegateRegistryNotSet();
+        if (s.delegationId == bytes32(0)) revert DelegationIdNotSet();
+
+        address delegatedTo = _readDelegate(delegator, s.delegationId);
+        _updateDelegationIndex(spaceId, delegator, delegatedTo);
+        emit SpaceDelegationSynced(spaceId, s.delegationId, delegator, delegatedTo);
+    }
+
+    function syncDelegationsForSpace(uint256 spaceId, address[] calldata delegators) external {
+        for (uint256 i = 0; i < delegators.length; i++) {
+            syncDelegationForSpace(spaceId, delegators[i]);
+        }
+    }
+
     function createProposal(
         uint256 spaceId,
         string calldata title,
@@ -184,7 +260,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         _validateVotePayload(p, optionIndices, weightsBps);
 
         Space storage s = _spaces[p.spaceId];
-        uint256 newWeight = IERC20(s.token).balanceOf(msg.sender);
+        uint256 newWeight = _getVotingPower(p.spaceId, msg.sender, s.token, s.delegationId);
         if (newWeight == 0) revert NoVotingPower();
 
         uint256[] memory distributedWeights = _computeDistributedWeights(newWeight, weightsBps);
@@ -325,6 +401,12 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         return _voteReceipts[proposalId][voter];
     }
 
+    function getVotingPower(uint256 spaceId, address voter) external view returns (uint256) {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        return _getVotingPower(spaceId, voter, s.token, s.delegationId);
+    }
+
     function isAdmin(uint256 spaceId, address account) external view returns (bool) {
         return _spaceAdmins[spaceId][account];
     }
@@ -333,7 +415,67 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         return _spaceProposers[spaceId][account];
     }
 
+    function _getVotingPower(uint256 spaceId, address voter, address token, bytes32 delegationId)
+        private
+        view
+        returns (uint256)
+    {
+        uint256 directBalance = IERC20(token).balanceOf(voter);
+        if (delegateRegistry == address(0) || delegationId == bytes32(0)) return directBalance;
+
+        // If voter delegated away for this space, only delegated-to-voter balances remain.
+        if (_readDelegate(voter, delegationId) != address(0)) {
+            directBalance = 0;
+        }
+
+        uint256 totalWeight = directBalance;
+        address[] storage inboundDelegators = _delegateInboundDelegators[spaceId][voter];
+        for (uint256 i = 0; i < inboundDelegators.length; i++) {
+            address delegator = inboundDelegators[i];
+            if (_readDelegate(delegator, delegationId) == voter) {
+                totalWeight += IERC20(token).balanceOf(delegator);
+            }
+        }
+        return totalWeight;
+    }
+
+    function _readDelegate(address delegator, bytes32 delegationId) private view returns (address) {
+        try IDelegateRegistry(delegateRegistry).delegation(delegator, delegationId) returns (address delegatedTo) {
+            return delegatedTo;
+        } catch {
+            return address(0);
+        }
+    }
+
+    function _updateDelegationIndex(uint256 spaceId, address delegator, address newDelegate) private {
+        address oldDelegate = _spaceDelegates[spaceId][delegator];
+        if (oldDelegate == newDelegate) return;
+
+        if (oldDelegate != address(0)) {
+            uint256 oldPosPlusOne = _delegateInboundIndexPlusOne[spaceId][oldDelegate][delegator];
+            if (oldPosPlusOne != 0) {
+                address[] storage oldList = _delegateInboundDelegators[spaceId][oldDelegate];
+                uint256 oldIndex = oldPosPlusOne - 1;
+                uint256 lastIndex = oldList.length - 1;
+                if (oldIndex != lastIndex) {
+                    address swapped = oldList[lastIndex];
+                    oldList[oldIndex] = swapped;
+                    _delegateInboundIndexPlusOne[spaceId][oldDelegate][swapped] = oldPosPlusOne;
+                }
+                oldList.pop();
+                delete _delegateInboundIndexPlusOne[spaceId][oldDelegate][delegator];
+            }
+        }
+
+        _spaceDelegates[spaceId][delegator] = newDelegate;
+        if (newDelegate != address(0)) {
+            address[] storage newList = _delegateInboundDelegators[spaceId][newDelegate];
+            newList.push(delegator);
+            _delegateInboundIndexPlusOne[spaceId][newDelegate][delegator] = newList.length;
+        }
+    }
+
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    uint256[50] private __gap;
+    uint256[46] private __gap;
 }

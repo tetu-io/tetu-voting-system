@@ -54,7 +54,9 @@ async function main() {
     VITE_RPC_URL: "http://127.0.0.1:8545",
     VITE_CHAIN_ID: String(deployment.chainId),
     VITE_VOTING_CONTRACT: deployment.votingCore,
-    VITE_TEST_PRIVATE_KEY: hardhatDefaultKey
+    VITE_USE_MOCK: "false",
+    VITE_TEST_PRIVATE_KEY: hardhatDefaultKey,
+    VITE_ENABLE_TEST_WALLET_LOGIN: "true"
   };
 
   web = await run(

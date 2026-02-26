@@ -12,12 +12,21 @@ async function main() {
   const VotingCore = await hre.ethers.getContractFactory("VotingCore");
   const proxy = await hre.upgrades.deployProxy(VotingCore, [deployer.address], { kind: "uups" });
   await proxy.waitForDeployment();
+  const votingCoreAddress = await proxy.getAddress();
+
+  const DelegateRegistry = await hre.ethers.getContractFactory("DelegateRegistry");
+  const delegateRegistry = await DelegateRegistry.deploy();
+  await delegateRegistry.waitForDeployment();
+
+  const voting = await hre.ethers.getContractAt("VotingCore", votingCoreAddress);
+  await (await voting.setDelegateRegistry(await delegateRegistry.getAddress())).wait();
 
   const deployment = {
     chainId: 31337,
     deployer: deployer.address,
     token: await token.getAddress(),
-    votingCore: await proxy.getAddress()
+    votingCore: votingCoreAddress,
+    delegateRegistry: await delegateRegistry.getAddress()
   };
 
   const sharedDir = path.resolve(__dirname, "../../shared/src");

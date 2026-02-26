@@ -17,6 +17,7 @@ This document is the source of truth for v1 requirements and architecture bounda
 - Space creation and administration.
 - Proposal creation and deletion by author.
 - Voting with ERC20 balance weight.
+- Per-space delegation support through Snapshot-compatible `DelegateRegistry`.
 - Re-vote support where latest vote replaces previous vote.
 - Results rendering in UI from on-chain storage + events.
 - Proposal creation from UI and CLI.
@@ -25,7 +26,6 @@ This document is the source of truth for v1 requirements and architecture bounda
 ### Out of scope (v1)
 - Mainnet/testnet production deployment flows.
 - Off-chain signatures and gasless voting.
-- Delegation and vote power plugins.
 - IPFS/Arweave content storage.
 - Multi-token voting (ERC721/ERC1155).
 

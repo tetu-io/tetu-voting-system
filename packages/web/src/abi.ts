@@ -6,11 +6,22 @@ export const votingAbi = [
   { type: "error", name: "ProposalNotStarted", inputs: [] },
   { type: "error", name: "ProposalEnded", inputs: [] },
   { type: "error", name: "InvalidOption", inputs: [] },
+  { type: "error", name: "NoVotingPower", inputs: [] },
+  { type: "error", name: "AlreadyDeleted", inputs: [] },
+  { type: "error", name: "SpaceNotFound", inputs: [] },
   { type: "error", name: "InvalidVoteSplit", inputs: [] },
   { type: "error", name: "DuplicateOption", inputs: [] },
   { type: "error", name: "MultiSelectNotAllowed", inputs: [] },
-  { type: "error", name: "NoVotingPower", inputs: [] },
-  { type: "error", name: "AlreadyDeleted", inputs: [] },
+  { type: "error", name: "DelegateRegistryNotSet", inputs: [] },
+  { type: "error", name: "DelegationIdNotSet", inputs: [] },
+  { type: "error", name: "DelegationIdAlreadySet", inputs: [] },
+  {
+    type: "function",
+    name: "delegateRegistry",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }]
+  },
   {
     type: "function",
     name: "createSpace",
@@ -46,6 +57,60 @@ export const votingAbi = [
   },
   {
     type: "function",
+    name: "setDelegateRegistry",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "registry", type: "address" }],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "setSpaceDelegationId",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "delegationId", type: "bytes32" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "setDelegateForSpace",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "delegate", type: "address" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "clearDelegateForSpace",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "spaceId", type: "uint256" }],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "syncDelegationForSpace",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "delegator", type: "address" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "syncDelegationsForSpace",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "delegators", type: "address[]" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "createProposal",
     stateMutability: "nonpayable",
     inputs: [
@@ -68,6 +133,17 @@ export const votingAbi = [
   },
   {
     type: "function",
+    name: "vote",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "proposalId", type: "uint256" },
+      { name: "optionIndices", type: "uint16[]" },
+      { name: "weightsBps", type: "uint16[]" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
     name: "getSpace",
     stateMutability: "view",
     inputs: [{ name: "spaceId", type: "uint256" }],
@@ -80,7 +156,8 @@ export const votingAbi = [
           { name: "token", type: "address" },
           { name: "owner", type: "address" },
           { name: "name", type: "string" },
-          { name: "description", type: "string" }
+          { name: "description", type: "string" },
+          { name: "delegationId", type: "bytes32" }
         ]
       }
     ]
@@ -122,17 +199,6 @@ export const votingAbi = [
   },
   {
     type: "function",
-    name: "vote",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "proposalId", type: "uint256" },
-      { name: "optionIndices", type: "uint16[]" },
-      { name: "weightsBps", type: "uint16[]" }
-    ],
-    outputs: []
-  },
-  {
-    type: "function",
     name: "getVoteReceipt",
     stateMutability: "view",
     inputs: [
@@ -153,6 +219,16 @@ export const votingAbi = [
         ]
       }
     ]
+  },
+  {
+    type: "function",
+    name: "getVotingPower",
+    stateMutability: "view",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "voter", type: "address" }
+    ],
+    outputs: [{ name: "", type: "uint256" }]
   },
   {
     type: "function",
@@ -208,6 +284,55 @@ export const votingAbi = [
   {
     anonymous: false,
     type: "event",
+    name: "DelegateRegistryUpdated",
+    inputs: [{ indexed: true, name: "delegateRegistryAddress", type: "address" }]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceDelegationIdUpdated",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "delegationId", type: "bytes32" },
+      { indexed: true, name: "updater", type: "address" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceDelegateSet",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "delegationId", type: "bytes32" },
+      { indexed: true, name: "delegator", type: "address" },
+      { indexed: false, name: "delegate", type: "address" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceDelegateCleared",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "delegationId", type: "bytes32" },
+      { indexed: true, name: "delegator", type: "address" },
+      { indexed: false, name: "delegate", type: "address" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceDelegationSynced",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "delegationId", type: "bytes32" },
+      { indexed: true, name: "delegator", type: "address" },
+      { indexed: false, name: "delegate", type: "address" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
     name: "ProposalCreated",
     inputs: [
       { indexed: true, name: "proposalId", type: "uint256" },
@@ -216,6 +341,15 @@ export const votingAbi = [
       { indexed: false, name: "startAt", type: "uint64" },
       { indexed: false, name: "endAt", type: "uint64" },
       { indexed: false, name: "allowMultipleChoices", type: "bool" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "ProposalDeleted",
+    inputs: [
+      { indexed: true, name: "proposalId", type: "uint256" },
+      { indexed: true, name: "author", type: "address" }
     ]
   },
   {
@@ -243,15 +377,6 @@ export const votingAbi = [
       { indexed: false, name: "weightsBps", type: "uint16[]" },
       { indexed: false, name: "distributedWeights", type: "uint256[]" },
       { indexed: false, name: "newTotalWeight", type: "uint256" }
-    ]
-  },
-  {
-    anonymous: false,
-    type: "event",
-    name: "ProposalDeleted",
-    inputs: [
-      { indexed: true, name: "proposalId", type: "uint256" },
-      { indexed: true, name: "author", type: "address" }
     ]
   }
 ] as const;

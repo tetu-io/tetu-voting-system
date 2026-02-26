@@ -4,7 +4,7 @@ require("hardhat-deploy");
 require("hardhat-deploy-ethers");
 
 const path = require("path");
-const { loadNetworkConfig } = require("./deploy/utils/loadNetworkConfig");
+const { loadNetworkConfig } = require("./config/loadNetworkConfig");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../../.env") });
 require("dotenv").config();

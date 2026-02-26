@@ -34,6 +34,7 @@ class InMemoryVotingService implements VotingService {
   private readonly tallies = new Map<bigint, bigint[]>();
   private readonly receipts = new Map<bigint, Map<WalletAddress, VoteReceipt>>();
   private readonly balances = new Map<WalletAddress, bigint>();
+  private readonly delegatesBySpace = new Map<bigint, Map<WalletAddress, WalletAddress>>();
   private readonly listeners = new Set<() => void>();
   private readonly activity: string[] = [];
 
@@ -137,7 +138,14 @@ class InMemoryVotingService implements VotingService {
   getVotingPower(spaceId: bigint, voter: WalletAddress): bigint {
     const space = this.spaces.get(spaceId);
     if (!space) return 0n;
-    return this.balances.get(voter) ?? 0n;
+    const delegates = this.delegatesBySpace.get(spaceId) ?? new Map<WalletAddress, WalletAddress>();
+    let total = delegates.get(voter) ? 0n : (this.balances.get(voter) ?? 0n);
+    for (const [delegator, delegate] of delegates.entries()) {
+      if (delegate === voter) {
+        total += this.balances.get(delegator) ?? 0n;
+      }
+    }
+    return total;
   }
 
   async execute(action: VotingAction): Promise<VotingTxResult> {
@@ -150,7 +158,14 @@ class InMemoryVotingService implements VotingService {
     if (action.functionName === "createSpace") {
       const [token, name, description] = action.args;
       const spaceId = this.nextSpaceId++;
-      const space: SpaceView = { id: spaceId, token, owner: from, name, description };
+      const space: SpaceView = {
+        id: spaceId,
+        token,
+        owner: from,
+        name,
+        description,
+        delegationId: "0x0000000000000000000000000000000000000000000000000000000000000000"
+      };
       this.spaces.set(spaceId, space);
       const proposers = this.proposers.get(spaceId) ?? new Set<WalletAddress>();
       proposers.add(from);
@@ -166,6 +181,19 @@ class InMemoryVotingService implements VotingService {
       else admins.delete(account);
       this.admins.set(spaceId, admins);
       logs.push({ eventName: "SpaceAdminUpdated", args: { spaceId, account, allowed } });
+    } else if (action.functionName === "setSpaceDelegationId") {
+      const [spaceId, delegationId] = action.args;
+      const space = this.spaces.get(spaceId);
+      if (!space) throw new Error("SpaceNotFound");
+      if (space.owner !== from && !this.isAdmin(spaceId, from)) throw new Error("Unauthorized");
+      if (
+        space.delegationId !== "0x0000000000000000000000000000000000000000000000000000000000000000" &&
+        space.delegationId !== delegationId
+      ) {
+        throw new Error("DelegationIdAlreadySet");
+      }
+      space.delegationId = delegationId;
+      logs.push({ eventName: "SpaceDelegationIdUpdated", args: { spaceId, delegationId, updater: from } });
     } else if (action.functionName === "setProposer") {
       const [spaceId, account, allowed] = action.args;
       const space = this.spaces.get(spaceId);
@@ -176,6 +204,43 @@ class InMemoryVotingService implements VotingService {
       else proposers.delete(account);
       this.proposers.set(spaceId, proposers);
       logs.push({ eventName: "SpaceProposerUpdated", args: { spaceId, account, allowed } });
+    } else if (action.functionName === "setDelegateForSpace") {
+      const [spaceId, delegate] = action.args;
+      const space = this.spaces.get(spaceId);
+      if (!space) throw new Error("SpaceNotFound");
+      if (space.delegationId === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        throw new Error("DelegationIdNotSet");
+      }
+      if (delegate === from) throw new Error("Can't delegate to self");
+      if (delegate === "0x0000000000000000000000000000000000000000") throw new Error("Can't delegate to 0x0");
+      const delegates = this.delegatesBySpace.get(spaceId) ?? new Map<WalletAddress, WalletAddress>();
+      if (delegates.get(from) === delegate) throw new Error("Already delegated to this address");
+      delegates.set(from, delegate);
+      this.delegatesBySpace.set(spaceId, delegates);
+      logs.push({ eventName: "SpaceDelegateSet", args: { spaceId, delegationId: space.delegationId, delegator: from, delegate } });
+    } else if (action.functionName === "clearDelegateForSpace") {
+      const [spaceId] = action.args;
+      const space = this.spaces.get(spaceId);
+      if (!space) throw new Error("SpaceNotFound");
+      if (space.delegationId === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        throw new Error("DelegationIdNotSet");
+      }
+      const delegates = this.delegatesBySpace.get(spaceId) ?? new Map<WalletAddress, WalletAddress>();
+      const previous = delegates.get(from);
+      if (!previous) throw new Error("No delegate set");
+      delegates.delete(from);
+      this.delegatesBySpace.set(spaceId, delegates);
+      logs.push({
+        eventName: "SpaceDelegateCleared",
+        args: { spaceId, delegationId: space.delegationId, delegator: from, delegate: previous }
+      });
+    } else if (action.functionName === "syncDelegationsForSpace") {
+      const [spaceId] = action.args;
+      const space = this.spaces.get(spaceId);
+      if (!space) throw new Error("SpaceNotFound");
+      if (space.delegationId === "0x0000000000000000000000000000000000000000000000000000000000000000") {
+        throw new Error("DelegationIdNotSet");
+      }
     } else if (action.functionName === "createProposal") {
       const [spaceId, title, description, options, startAt, endAt, allowMultipleChoices] = action.args;
       const space = this.spaces.get(spaceId);
@@ -222,7 +287,7 @@ class InMemoryVotingService implements VotingService {
       if (optionIndices.length === 0 || optionIndices.length !== weightsBps.length) throw new Error("InvalidVoteSplit");
       if (!proposal.allowMultipleChoices && optionIndices.length !== 1) throw new Error("MultiSelectNotAllowed");
 
-      const weight = this.balances.get(from) ?? 0n;
+      const weight = this.getVotingPower(proposal.spaceId, from);
       if (weight === 0n) throw new Error("NoVotingPower");
 
       const seen = new Set<number>();

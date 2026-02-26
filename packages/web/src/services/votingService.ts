@@ -8,6 +8,7 @@ export type SpaceView = {
   owner: WalletAddress;
   name: string;
   description: string;
+  delegationId: `0x${string}`;
 };
 
 export type ProposalViewModel = {
@@ -33,6 +34,10 @@ export type VotingAction =
   | { functionName: "createSpace"; args: [WalletAddress, string, string] }
   | { functionName: "setAdmin"; args: [bigint, WalletAddress, boolean] }
   | { functionName: "setProposer"; args: [bigint, WalletAddress, boolean] }
+  | { functionName: "setSpaceDelegationId"; args: [bigint, `0x${string}`] }
+  | { functionName: "setDelegateForSpace"; args: [bigint, WalletAddress] }
+  | { functionName: "clearDelegateForSpace"; args: [bigint] }
+  | { functionName: "syncDelegationsForSpace"; args: [bigint, WalletAddress[]] }
   | { functionName: "createProposal"; args: [bigint, string, string, string[], bigint, bigint, boolean] }
   | { functionName: "deleteProposal"; args: [bigint] }
   | { functionName: "vote"; args: [bigint, number[], number[]] };

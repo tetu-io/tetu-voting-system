@@ -31,6 +31,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     error DelegationIdNotSet();
     error DelegationIdAlreadySet();
     error DelegationMismatch();
+    error WeightAlreadyClaimed(address weightOwner, address currentController);
 
     struct Space {
         uint256 id;
@@ -62,6 +63,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         uint64 updatedAt;
         uint16[] optionIndices;
         uint16[] weightsBps;
+        address[] contributors;
     }
 
     uint16 private constant BPS_DENOMINATOR = 10_000;
@@ -79,6 +81,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     mapping(uint256 => mapping(address => address)) private _spaceDelegates;
     mapping(uint256 => mapping(address => address[])) private _delegateInboundDelegators;
     mapping(uint256 => mapping(address => mapping(address => uint256))) private _delegateInboundIndexPlusOne;
+    mapping(uint256 => mapping(address => address)) private _proposalWeightController;
 
     event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name);
     event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed);
@@ -260,6 +263,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         _validateVotePayload(p, optionIndices, weightsBps);
 
         Space storage s = _spaces[p.spaceId];
+        address[] memory contributors = _collectWeightContributors(p.spaceId, msg.sender, s.delegationId);
         uint256 newWeight = _getVotingPower(p.spaceId, msg.sender, s.token, s.delegationId);
         if (newWeight == 0) revert NoVotingPower();
 
@@ -267,6 +271,9 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
 
         VoteReceipt storage receipt = _voteReceipts[proposalId][msg.sender];
         if (receipt.hasVoted) {
+            _clearProposalWeightControllers(proposalId, receipt.contributors);
+            _assertProposalWeightControllersAvailable(proposalId, contributors, msg.sender);
+            _setProposalWeightControllers(proposalId, contributors, msg.sender);
             _removePreviousVoteFromTallies(proposalId, receipt);
             _applyVoteToTallies(proposalId, optionIndices, distributedWeights);
             emit VoteRecast(
@@ -279,15 +286,21 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
                 newWeight
             );
         } else {
+            _assertProposalWeightControllersAvailable(proposalId, contributors, msg.sender);
+            _setProposalWeightControllers(proposalId, contributors, msg.sender);
             _applyVoteToTallies(proposalId, optionIndices, distributedWeights);
             emit VoteCast(proposalId, msg.sender, optionIndices, weightsBps, distributedWeights, newWeight);
         }
 
         delete receipt.optionIndices;
         delete receipt.weightsBps;
+        delete receipt.contributors;
         for (uint256 i = 0; i < optionIndices.length; i++) {
             receipt.optionIndices.push(optionIndices[i]);
             receipt.weightsBps.push(weightsBps[i]);
+        }
+        for (uint256 i = 0; i < contributors.length; i++) {
+            receipt.contributors.push(contributors[i]);
         }
         receipt.hasVoted = true;
         receipt.optionIndex = optionIndices[0];
@@ -420,23 +433,72 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         view
         returns (uint256)
     {
-        uint256 directBalance = IERC20(token).balanceOf(voter);
-        if (delegateRegistry == address(0) || delegationId == bytes32(0)) return directBalance;
+        address[] memory contributors = _collectWeightContributors(spaceId, voter, delegationId);
+        uint256 totalWeight = 0;
+        for (uint256 i = 0; i < contributors.length; i++) {
+            totalWeight += IERC20(token).balanceOf(contributors[i]);
+        }
+        return totalWeight;
+    }
 
-        // If voter delegated away for this space, only delegated-to-voter balances remain.
-        if (_readDelegate(voter, delegationId) != address(0)) {
-            directBalance = 0;
+    function _collectWeightContributors(uint256 spaceId, address voter, bytes32 delegationId)
+        private
+        view
+        returns (address[] memory)
+    {
+        if (delegateRegistry == address(0) || delegationId == bytes32(0)) {
+            address[] memory directOnly = new address[](1);
+            directOnly[0] = voter;
+            return directOnly;
         }
 
-        uint256 totalWeight = directBalance;
         address[] storage inboundDelegators = _delegateInboundDelegators[spaceId][voter];
+        address[] memory contributors = new address[](inboundDelegators.length + 1);
+        uint256 count = 0;
+
+        // If voter delegated away for this space, only delegated-to-voter balances remain.
+        if (_readDelegate(voter, delegationId) == address(0)) {
+            contributors[count++] = voter;
+        }
+
         for (uint256 i = 0; i < inboundDelegators.length; i++) {
             address delegator = inboundDelegators[i];
             if (_readDelegate(delegator, delegationId) == voter) {
-                totalWeight += IERC20(token).balanceOf(delegator);
+                contributors[count++] = delegator;
             }
         }
-        return totalWeight;
+
+        address[] memory compactContributors = new address[](count);
+        for (uint256 i = 0; i < count; i++) {
+            compactContributors[i] = contributors[i];
+        }
+        return compactContributors;
+    }
+
+    function _assertProposalWeightControllersAvailable(
+        uint256 proposalId,
+        address[] memory contributors,
+        address controller
+    ) private view {
+        for (uint256 i = 0; i < contributors.length; i++) {
+            address owner = contributors[i];
+            address existingController = _proposalWeightController[proposalId][owner];
+            if (existingController != address(0) && existingController != controller) {
+                revert WeightAlreadyClaimed(owner, existingController);
+            }
+        }
+    }
+
+    function _setProposalWeightControllers(uint256 proposalId, address[] memory contributors, address controller) private {
+        for (uint256 i = 0; i < contributors.length; i++) {
+            _proposalWeightController[proposalId][contributors[i]] = controller;
+        }
+    }
+
+    function _clearProposalWeightControllers(uint256 proposalId, address[] storage contributors) private {
+        for (uint256 i = 0; i < contributors.length; i++) {
+            delete _proposalWeightController[proposalId][contributors[i]];
+        }
     }
 
     function _readDelegate(address delegator, bytes32 delegationId) private view returns (address) {
@@ -477,5 +539,5 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    uint256[46] private __gap;
+    uint256[45] private __gap;
 }

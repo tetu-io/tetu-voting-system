@@ -96,7 +96,9 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - for multi-choice proposal: unique option indices only,
   - each bps > 0 and total `weightsBps == 10000`,
   - option index in range,
-  - token balance > 0.
+  - effective voting power > 0 (direct balance + active inbound delegations),
+  - each underlying weight owner can be controlled by only one voter per proposal
+    (prevents double counting after mid-proposal delegation changes).
 - `deleteProposal`:
   - only author,
   - allowed regardless of proposal time.
@@ -104,16 +106,25 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 ## 7. Re-vote Replace Algorithm
 
 Given voter `V` for proposal `P`:
-1. `newWeight = IERC20(token).balanceOf(V)`.
-2. Split `newWeight` across selected options according to `weightsBps` (sum 100%).
-3. If no previous vote:
+1. Build effective contributors for `V`:
+   - `V` itself (unless currently delegated away),
+   - inbound delegators actively delegating to `V` for this space.
+2. Ensure contributor owners are not already claimed by another voter in `P`
+   (otherwise revert `WeightAlreadyClaimed`).
+3. `newWeight = sum(balanceOf(contributor))`.
+4. Split `newWeight` across selected options according to `weightsBps` (sum 100%).
+5. If no previous vote:
+   - claim contributor ownership for `V`,
    - add each split portion to selected option tallies.
-4. If previous vote exists:
+6. If previous vote exists:
+   - release old contributor ownership from receipt,
+   - claim current contributor ownership for `V`,
    - subtract old split portions from old selected options,
    - add new split portions to new selected options.
-5. Save receipt (`optionIndices`, `weightsBps`, `newWeight`, `updatedAt`).
+7. Save receipt (`optionIndices`, `weightsBps`, `newWeight`, `updatedAt`, contributors).
 
-This keeps tallies consistent with the latest recorded vote per voter.
+This keeps tallies consistent with the latest vote per voter while preventing
+the same token owner's weight from being counted by multiple voters in one proposal.
 
 ## 8. Events
 
@@ -149,6 +160,7 @@ This keeps tallies consistent with the latest recorded vote per voter.
 - `DelegationIdNotSet()`
 - `DelegationIdAlreadySet()`
 - `DelegationMismatch()`
+- `WeightAlreadyClaimed(address weightOwner, address currentController)`
 
 ## 10. UUPS Upgrade Constraints
 

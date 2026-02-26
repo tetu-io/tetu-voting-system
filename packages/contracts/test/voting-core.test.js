@@ -269,4 +269,33 @@ describe("VotingCore", function () {
     expect(talliesAfterClear[0]).to.equal(0);
     expect(talliesAfterClear[1]).to.equal(ethers.parseEther("100"));
   });
+
+  it("prevents double counting when voter delegates after already voting", async function () {
+    const { voting, owner, proposer, voter, other, spaceId } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, proposer.address, true)).wait();
+
+    const DelegateRegistry = await ethers.getContractFactory("DelegateRegistry");
+    const delegateRegistry = await DelegateRegistry.deploy();
+    await delegateRegistry.waitForDeployment();
+    await (await voting.connect(owner).setDelegateRegistry(await delegateRegistry.getAddress())).wait();
+    await (await voting.connect(owner).setSpaceDelegationId(spaceId, DELEGATION_ID)).wait();
+
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(proposer)
+        .createProposal(spaceId, "No double count", "D", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+
+    await expect(voting.connect(other).vote(1, [0], [10000])).to.emit(voting, "VoteCast");
+    const [, talliesAfterOtherVote] = await voting.getProposalTallies(1);
+    expect(talliesAfterOtherVote[0]).to.equal(ethers.parseEther("100"));
+
+    await (await delegateRegistry.connect(other).setDelegate(DELEGATION_ID, voter.address)).wait();
+    await (await voting.syncDelegationForSpace(spaceId, other.address)).wait();
+
+    await expect(voting.connect(voter).vote(1, [1], [10000]))
+      .to.be.revertedWithCustomError(voting, "WeightAlreadyClaimed")
+      .withArgs(other.address, other.address);
+  });
 });

@@ -172,6 +172,22 @@
       "type": "error"
     },
     {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "weightOwner",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "currentController",
+          "type": "address"
+        }
+      ],
+      "name": "WeightAlreadyClaimed",
+      "type": "error"
+    },
+    {
       "anonymous": false,
       "inputs": [
         {
@@ -909,6 +925,11 @@
               "internalType": "uint16[]",
               "name": "weightsBps",
               "type": "uint16[]"
+            },
+            {
+              "internalType": "address[]",
+              "name": "contributors",
+              "type": "address[]"
             }
           ],
           "internalType": "struct VotingCore.VoteReceipt",
@@ -1223,6 +1244,6 @@
       "type": "function"
     }
   ],
-  "transactionHash": "0xc95dcf488fe81d9973b6cd45932ac50d9fdb34abd56b3766cb50bbc712d93241",
+  "transactionHash": "0xc447125bbc1c007b1a52bf099d367bd105ed2bbb9d200069d9c87f04413fe97f",
   "numDeployments": 1
 }

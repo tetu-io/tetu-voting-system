@@ -5,6 +5,7 @@ Simplified Snapshot-like voting system (v1) with:
 - React web app with wagmi-based wallet integration,
 - Node CLI for proposal/vote/results flows,
 - delegation-aware voting power via Snapshot DelegateRegistry-compatible flow,
+- proposal-level delegated weight ownership guard (prevents mid-proposal double counting),
 - local-first Hardhat setup.
 
 ## Monorepo layout

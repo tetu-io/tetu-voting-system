@@ -16,6 +16,14 @@ export const votingAbi = [
   { type: "error", name: "DelegationIdNotSet", inputs: [] },
   { type: "error", name: "DelegationIdAlreadySet", inputs: [] },
   {
+    type: "error",
+    name: "WeightAlreadyClaimed",
+    inputs: [
+      { name: "weightOwner", type: "address" },
+      { name: "currentController", type: "address" }
+    ]
+  },
+  {
     type: "function",
     name: "delegateRegistry",
     stateMutability: "view",

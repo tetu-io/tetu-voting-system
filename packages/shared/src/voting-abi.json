@@ -170,6 +170,22 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "weightOwner",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "currentController",
+        "type": "address"
+      }
+    ],
+    "name": "WeightAlreadyClaimed",
+    "type": "error"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
@@ -907,6 +923,11 @@
             "internalType": "uint16[]",
             "name": "weightsBps",
             "type": "uint16[]"
+          },
+          {
+            "internalType": "address[]",
+            "name": "contributors",
+            "type": "address[]"
           }
         ],
         "internalType": "struct VotingCore.VoteReceipt",

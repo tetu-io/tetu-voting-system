@@ -2,14 +2,14 @@
 
 Simplified Snapshot-like voting system (v1) with:
 - UUPS-upgradeable Solidity contracts,
-- React web app with Rainbow wallet integration,
+- React web app with wagmi-based wallet integration,
 - Node CLI for proposal/vote/results flows,
 - local-first Hardhat setup.
 
 ## Monorepo layout
 
 - `packages/contracts` - Hardhat contracts, deploy/seed/upgrade scripts, contract tests
-- `packages/web` - React + Vite UI (RainbowKit + wagmi)
+- `packages/web` - React + Vite UI (wagmi + injected/test wallet mode)
 - `packages/cli` - CLI commands (`proposal:create`, `vote:cast`, `results:read`)
 - `packages/shared` - shared types and generated local deployment artifacts
 
@@ -21,6 +21,7 @@ Key variables:
 - `VITE_RPC_URL`
 - `VITE_CHAIN_ID`
 - `VITE_VOTING_CONTRACT`
+- `VITE_TEST_PRIVATE_KEY` (optional, used by e2e test wallet flow)
 - `CLI_RPC_URL`
 - `CLI_CONTRACT`
 
@@ -44,6 +45,12 @@ This command runs:
 3. local seed script (balances + demo space + proposals)
 4. web dev server
 
+Dedicated one-command stack for Playwright e2e (includes deterministic test wallet env):
+
+```bash
+npm run dev:stack:e2e
+```
+
 ## Package scripts
 
 Contracts:
@@ -63,6 +70,7 @@ npm run dev -w packages/web
 npm run build -w packages/web
 npm run test -w packages/web
 npm run test:e2e -w packages/web
+npm run test:e2e:full
 ```
 
 CLI:

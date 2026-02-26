@@ -12,7 +12,9 @@
     "build": "npm run build -ws --if-present",
     "lint": "npm run lint -ws --if-present",
     "test": "npm run test -ws --if-present",
-    "dev:stack": "node scripts/dev-stack.mjs"
+    "dev:stack": "node scripts/dev-stack.mjs",
+    "dev:stack:e2e": "node scripts/dev-stack-e2e.mjs",
+    "test:e2e:full": "npm run test:e2e -w packages/web"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.44.1",

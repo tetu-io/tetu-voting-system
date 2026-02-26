@@ -6,15 +6,18 @@ export default defineConfig({
   testDir: "./tests",
   testMatch: "**/*.e2e.ts",
   testIgnore: runE2E ? [] : ["**/*"],
+  retries: runE2E ? 1 : 0,
+  workers: 1,
+  timeout: 120000,
   use: {
     baseURL: "http://127.0.0.1:4173"
   },
   webServer: runE2E
     ? {
-        command: "npm run dev -- --host 127.0.0.1 --port 4173",
+        command: "cd ../.. && npm run dev:stack:e2e",
         port: 4173,
-        reuseExistingServer: true,
-        timeout: 120000
+        reuseExistingServer: false,
+        timeout: 240000
       }
     : undefined
 });

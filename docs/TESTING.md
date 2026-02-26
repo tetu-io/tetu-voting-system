@@ -20,10 +20,10 @@
 
 ## 2. One-command Local Stand
 
-Expected single command (example):
+Expected single command:
 
 ```bash
-pnpm dev:stack
+npm run dev:stack
 ```
 
 This command should orchestrate:
@@ -34,6 +34,18 @@ This command should orchestrate:
    - create one demo space,
    - create demo proposals,
 4. start React app with local RPC config.
+
+For full Playwright frontend e2e (real contracts + deterministic wallet), use:
+
+```bash
+npm run dev:stack:e2e
+```
+
+This variant injects:
+- `VITE_RPC_URL=http://127.0.0.1:8545`
+- `VITE_CHAIN_ID=31337`
+- deployed `VITE_VOTING_CONTRACT`
+- deterministic `VITE_TEST_PRIVATE_KEY` for in-UI test wallet connect.
 
 ## 3. Seed Data Requirements
 
@@ -46,35 +58,27 @@ This command should orchestrate:
 
 ## 4. Playwright Critical Paths
 
-## 4.1 UI create proposal
-- Connect wallet.
-- Open create form.
-- Submit valid data.
-- Assert created proposal appears in list and details page.
+## 4.1 Full frontend scenario (single e2e)
+- Connect test wallet from UI.
+- Create space from UI.
+- Set admin from UI.
+- Set proposer from UI.
+- Create proposal from UI.
+- Cast first vote from UI.
+- Re-cast vote from UI.
+- Create short-lived proposal and assert ended vote rejection from UI.
+- Delete proposal from UI.
+- Verify on-chain reads (space/roles/proposal/tallies/receipt/deleted flag) after each critical step.
 
-## 4.2 Vote and re-vote
-- Cast first vote.
-- Capture tally.
-- Re-vote another option.
-- Assert old option decreased and new option increased correctly.
-
-## 4.3 Vote after deadline
-- Move chain time beyond `endAt`.
-- Attempt vote.
-- Assert transaction rejection and error message in UI.
-
-## 4.4 CLI + UI interoperability
-- Create proposal via CLI.
-- Refresh UI.
-- Assert proposal is visible and votable in UI.
+## 4.2 Runtime health checks
+- Fail test on `pageerror`.
+- Fail test on critical `console.error`.
+- Ensure UI renders wallet/status controls and actionable forms.
 
 ## 5. Deterministic Time Control
 
-- Use Hardhat time helpers:
-  - `evm_setNextBlockTimestamp`,
-  - `evm_increaseTime`,
-  - `evm_mine`.
-- Required for reliable tests around `startAt/endAt` boundaries.
+- For short-lived proposal checks, use very small `endAt` windows in e2e input and assert rejection path after expiration.
+- Optional contract-level boundary tests still use Hardhat helpers (`evm_setNextBlockTimestamp`, `evm_increaseTime`, `evm_mine`) in unit/integration suites.
 
 ## 6. Definition of Done for Test Suite
 

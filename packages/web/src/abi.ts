@@ -1,4 +1,46 @@
 export const votingAbi = [
+  { type: "error", name: "Unauthorized", inputs: [] },
+  { type: "error", name: "InvalidTimeRange", inputs: [] },
+  { type: "error", name: "ProposalNotFound", inputs: [] },
+  { type: "error", name: "ProposalIsDeleted", inputs: [] },
+  { type: "error", name: "ProposalNotStarted", inputs: [] },
+  { type: "error", name: "ProposalEnded", inputs: [] },
+  { type: "error", name: "InvalidOption", inputs: [] },
+  { type: "error", name: "NoVotingPower", inputs: [] },
+  { type: "error", name: "AlreadyDeleted", inputs: [] },
+  {
+    type: "function",
+    name: "createSpace",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "name", type: "string" },
+      { name: "description", type: "string" }
+    ],
+    outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "setAdmin",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "account", type: "address" },
+      { name: "allowed", type: "bool" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "setProposer",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "account", type: "address" },
+      { name: "allowed", type: "bool" }
+    ],
+    outputs: []
+  },
   {
     type: "function",
     name: "createProposal",
@@ -12,6 +54,32 @@ export const votingAbi = [
       { name: "endAt", type: "uint64" }
     ],
     outputs: [{ name: "", type: "uint256" }]
+  },
+  {
+    type: "function",
+    name: "deleteProposal",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "proposalId", type: "uint256" }],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "getSpace",
+    stateMutability: "view",
+    inputs: [{ name: "spaceId", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "id", type: "uint256" },
+          { name: "token", type: "address" },
+          { name: "owner", type: "address" },
+          { name: "name", type: "string" },
+          { name: "description", type: "string" }
+        ]
+      }
+    ]
   },
   {
     type: "function",
@@ -56,6 +124,78 @@ export const votingAbi = [
       { name: "optionIndex", type: "uint16" }
     ],
     outputs: []
+  },
+  {
+    type: "function",
+    name: "getVoteReceipt",
+    stateMutability: "view",
+    inputs: [
+      { name: "proposalId", type: "uint256" },
+      { name: "voter", type: "address" }
+    ],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "hasVoted", type: "bool" },
+          { name: "optionIndex", type: "uint16" },
+          { name: "weight", type: "uint256" },
+          { name: "updatedAt", type: "uint64" }
+        ]
+      }
+    ]
+  },
+  {
+    type: "function",
+    name: "isAdmin",
+    stateMutability: "view",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "account", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    type: "function",
+    name: "isProposer",
+    stateMutability: "view",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "account", type: "address" }
+    ],
+    outputs: [{ name: "", type: "bool" }]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceCreated",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "owner", type: "address" },
+      { indexed: true, name: "token", type: "address" },
+      { indexed: false, name: "name", type: "string" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceAdminUpdated",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "account", type: "address" },
+      { indexed: false, name: "allowed", type: "bool" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceProposerUpdated",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "account", type: "address" },
+      { indexed: false, name: "allowed", type: "bool" }
+    ]
   },
   {
     anonymous: false,

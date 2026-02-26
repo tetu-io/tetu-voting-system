@@ -1,0 +1,12 @@
+{
+  "name": "@tetu-vote/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "echo \"shared has no build step yet\"",
+    "lint": "eslint \"src/**/*.{ts,tsx}\"",
+    "test": "echo \"shared has no tests yet\""
+  }
+}

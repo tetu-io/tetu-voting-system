@@ -1,0 +1,21 @@
+{
+  "name": "@tetu-vote/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "hardhat compile",
+    "lint": "echo \"contracts lint skipped\"",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy-local.js --network localhost",
+    "seed:local": "hardhat run scripts/seed-local.js --network localhost",
+    "upgrade:smoke": "hardhat run scripts/upgrade-smoke.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.4.0",
+    "@openzeppelin/contracts-upgradeable": "^5.4.0",
+    "@openzeppelin/hardhat-upgrades": "^3.9.1",
+    "hardhat": "^2.26.3"
+  }
+}

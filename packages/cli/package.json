@@ -1,0 +1,19 @@
+{
+  "name": "@tetu-vote/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tetu-vote": "src/index.js"
+  },
+  "scripts": {
+    "build": "echo \"cli build skipped\"",
+    "lint": "eslint \"src/**/*.js\"",
+    "test": "node ./test/smoke.test.js"
+  },
+  "dependencies": {
+    "commander": "^14.0.1",
+    "dotenv": "^17.2.2",
+    "ethers": "^6.15.0"
+  }
+}

@@ -1313,7 +1313,6 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
             {proposalStatus}
           </strong>
         </p>
-        <p className="text__paragraph">Voting power: {formatEther(votingPower)} tokens</p>
         <p className="text__paragraph">Your voting power: {formatEther(votingPower)} tokens</p>
       </Card>
 

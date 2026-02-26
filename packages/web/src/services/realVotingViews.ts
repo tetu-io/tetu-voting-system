@@ -273,11 +273,21 @@ export async function fetchRealProposalVoters(
     return (a.logIndex ?? 0) - (b.logIndex ?? 0);
   });
 
+  const uniqueBlockNumbers = [...new Set(ordered.map((log) => log.blockNumber).filter((item): item is bigint => typeof item === "bigint"))];
+  const blocks = await Promise.all(
+    uniqueBlockNumbers.map(async (blockNumber) => ({
+      blockNumber,
+      block: await client.getBlock({ blockNumber })
+    }))
+  );
+  const blockTimestampByNumber = new Map<bigint, bigint>(blocks.map(({ blockNumber, block }) => [blockNumber, block.timestamp]));
+
   const voterState = new Map<WalletAddress, ProposalVoterView>();
   for (const log of ordered) {
     const args = log.args as Record<string, unknown>;
     const voter = args.voter;
     if (typeof voter !== "string") continue;
+    const updatedAt = typeof log.blockNumber === "bigint" ? (blockTimestampByNumber.get(log.blockNumber) ?? null) : null;
     if (log.eventName === "VoteCast") {
       const optionIndices = (args.optionIndices as readonly bigint[] | undefined) ?? [];
       const weightsBps = (args.weightsBps as readonly bigint[] | undefined) ?? [];
@@ -286,7 +296,7 @@ export async function fetchRealProposalVoters(
         optionIndices: optionIndices.map((item) => Number(item)),
         weightsBps: weightsBps.map((item) => Number(item)),
         weight: (args.totalWeight as bigint) ?? 0n,
-        updatedAt: null
+        updatedAt
       });
       continue;
     }
@@ -297,7 +307,7 @@ export async function fetchRealProposalVoters(
       optionIndices: newOptionIndices.map((item) => Number(item)),
       weightsBps: newWeightsBps.map((item) => Number(item)),
       weight: (args.newTotalWeight as bigint) ?? 0n,
-      updatedAt: null
+      updatedAt
     });
   }
   return [...voterState.values()].sort((a, b) => b.voter.localeCompare(a.voter));

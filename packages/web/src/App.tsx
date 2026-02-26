@@ -110,6 +110,32 @@ function isBytes32(value: string): value is `0x${string}` {
   return /^0x[a-fA-F0-9]{64}$/.test(value);
 }
 
+function delegateIdTextToBytes32(value: string): `0x${string}` | null {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (isBytes32(normalized)) return normalized;
+  if (normalized.startsWith("0x")) return null;
+
+  const encoded = new TextEncoder().encode(normalized);
+  if (encoded.length > 32) return null;
+
+  const hex = Array.from(encoded, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `0x${hex.padEnd(64, "0")}`;
+}
+
+function bytes32ToReadableText(value: `0x${string}`): string | null {
+  if (!isBytes32(value)) return null;
+  const raw = value.slice(2);
+  let text = "";
+  for (let i = 0; i < raw.length; i += 2) {
+    const byte = Number.parseInt(raw.slice(i, i + 2), 16);
+    if (byte === 0) break;
+    if (!Number.isFinite(byte) || byte < 32 || byte > 126) return null;
+    text += String.fromCharCode(byte);
+  }
+  return text.length > 0 ? text : null;
+}
+
 function shortAddress(value: string): string {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
@@ -124,6 +150,11 @@ function unixToDateTimeLocal(value: bigint): string {
   const date = new Date(Number(value) * 1000);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function unixToLocalDisplay(value: bigint | null): string {
+  if (value === null) return "-";
+  return new Date(Number(value) * 1000).toLocaleString();
 }
 
 function normalizeWeightsToBps(weights: number[]): number[] | null {
@@ -429,12 +460,17 @@ function Header({ runtime }: { runtime: RuntimeContext }) {
 
           {runtime.effectiveConnected && runtime.effectiveAddress && (
             <div style={{ position: "relative" }} className="row">
-              <span data-testid="wallet-status" className="text__paragraph">
-                Wallet: {runtime.effectiveAddress}
-              </span>
-              <IconButton aria-label="menu" onClick={() => setMenuOpen((prev) => !prev)}>
-                ☰
-              </IconButton>
+              <Button
+                data-testid="wallet-status"
+                variant="secondary"
+                size="sm"
+                aria-label="menu"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((prev) => !prev)}
+              >
+                {shortAddress(runtime.effectiveAddress)}
+              </Button>
               {menuOpen && (
                 <Card surface="dark" style={{ position: "absolute", top: 44, right: 0, minWidth: 230, zIndex: 5 }}>
                   <p className="text__paragraph" style={{ marginTop: 0 }}>
@@ -518,13 +554,6 @@ function AppLayout({ runtime, children }: { runtime: RuntimeContext; children: R
   return (
     <main className="app-shell app-main">
       <Header runtime={runtime} />
-      {runtime.txHash && (
-        <Card surface="dark">
-          <p data-testid="tx-hash" className="text__paragraph" style={{ margin: 0 }}>
-            Tx hash: {runtime.txHash}
-          </p>
-        </Card>
-      )}
       {children}
       <div className="app-toast-stack" aria-live="polite" aria-atomic="false">
         {useMock && !dismissedToasts.mock && (
@@ -800,7 +829,6 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
         {activeTab === "about" && <p className="text__paragraph">{space?.description ?? "Space not found or not loaded"}</p>}
         {activeTab === "proposals" && (
           <>
-            <p className="text__paragraph">{space?.description ?? "Space not found or not loaded"}</p>
             <TableWrap>
               <Table>
                 <thead>
@@ -998,7 +1026,7 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
   const parsedSpaceId = spaceId && /^\d+$/.test(spaceId) ? BigInt(spaceId) : null;
   const [adminAccount, setAdminAccount] = useState("0x0000000000000000000000000000000000000000");
   const [allowed, setAllowed] = useState(true);
-  const [delegationId, setDelegationId] = useState("0x0000000000000000000000000000000000000000000000000000000000000000");
+  const [delegationIdInput, setDelegationIdInput] = useState("");
   const [delegateAddress, setDelegateAddress] = useState("0x0000000000000000000000000000000000000000");
 
   useEffect(() => {
@@ -1006,7 +1034,9 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
     async function run() {
       if (useMock) {
         const space = runtime.mockService.getSpace(parsedSpaceId);
-        if (space) setDelegationId(space.delegationId);
+        if (space) {
+          setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
+        }
         return;
       }
       try {
@@ -1016,7 +1046,7 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
           functionName: "getSpace",
           args: [parsedSpaceId]
         });
-        setDelegationId(space.delegationId);
+        setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
       } catch {
         // ignore load errors on settings page
       }
@@ -1034,7 +1064,8 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
 
   async function saveDelegationId() {
     if (parsedSpaceId === null) return;
-    if (!isBytes32(delegationId)) return;
+    const delegationId = delegateIdTextToBytes32(delegationIdInput);
+    if (!delegationId) return;
     await runtime.executeAction({ functionName: "setSpaceDelegationId", args: [parsedSpaceId, delegationId] });
   }
 
@@ -1050,6 +1081,7 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
   }
 
   if (parsedSpaceId === null) return <p>Invalid space id</p>;
+  const delegationIdHex = delegateIdTextToBytes32(delegationIdInput);
 
   return (
     <section className="page-stack">
@@ -1084,19 +1116,22 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
               {runtime.txPending ? "Saving..." : "Save"}
             </Button>
             <Field>
-              <FieldLabel>Space delegation id (bytes32)</FieldLabel>
+              <FieldLabel>Space delegation id (text or bytes32)</FieldLabel>
               <Input
                 data-testid="space-delegation-id-input"
-                value={delegationId}
-                onChange={(e) => setDelegationId(e.target.value)}
-                placeholder="0x..."
+                value={delegationIdInput}
+                onChange={(e) => setDelegationIdInput(e.target.value)}
+                placeholder="tetubal.eth"
               />
             </Field>
+            <p className="text__caption" style={{ marginTop: -8 }}>
+              Encoded bytes32: {delegationIdHex ?? "invalid value (use text up to 32 bytes or full 0x-prefixed bytes32)"}
+            </p>
             <Button
               data-testid="set-space-delegation-id-btn"
               variant="primary"
               onClick={saveDelegationId}
-              disabled={!isBytes32(delegationId) || runtime.txPending || runtime.isWrongNetwork}
+              disabled={!delegationIdHex || runtime.txPending || runtime.isWrongNetwork}
             >
               {runtime.txPending ? "Saving..." : "Save delegation id"}
             </Button>
@@ -1225,6 +1260,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const proposalStatus = proposal.deleted ? "deleted" : now >= proposal.endAt ? "ended" : "active";
   const canVote = runtime.effectiveConnected && !runtime.isWrongNetwork && votingPower > 0n && proposalStatus === "active";
+  const totalTallyWeight = tallies[1].reduce((sum, weight) => sum + weight, 0n);
 
   async function voteSingle(optionIndex: number) {
     await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, [optionIndex], [10000]] });
@@ -1278,6 +1314,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
           </strong>
         </p>
         <p className="text__paragraph">Voting power: {formatEther(votingPower)} tokens</p>
+        <p className="text__paragraph">Your voting power: {formatEther(votingPower)} tokens</p>
       </Card>
 
       <Card surface="dark" className="stack-3">
@@ -1297,10 +1334,20 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
               {tallies[0].map((option, idx) => {
                 const isMulti = Boolean(proposal.allowMultipleChoices);
                 const selected = selectedOptions[idx] ?? false;
+                const optionWeight = tallies[1][idx] ?? 0n;
+                const optionPercentBps = totalTallyWeight > 0n ? Number((optionWeight * 10000n) / totalTallyWeight) : 0;
+                const optionPercent = optionPercentBps / 100;
                 return (
                   <tr key={option}>
                     <td>{option}</td>
-                    <td>{formatEther(tallies[1][idx] ?? 0n)}</td>
+                    <td>
+                      <div className="proposal-result" data-testid={`proposal-result-${idx}`}>
+                        <span className="text__paragraph">{optionPercent.toFixed(2)}% ({formatEther(optionWeight)})</span>
+                        <div className="proposal-result__track" role="img" aria-label={`${optionPercent.toFixed(2)} percent`}>
+                          <div className="proposal-result__fill" style={{ width: `${Math.min(optionPercent, 100)}%` }} />
+                        </div>
+                      </div>
+                    </td>
                     <td>
                       {isMulti ? (
                         <div className="row">
@@ -1359,23 +1406,28 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
             <thead>
               <tr>
                 <th>Address</th>
-                <th>Option indices</th>
+                <th>Options</th>
                 <th>Weights %</th>
                 <th>Weight</th>
+                <th>Voted at</th>
               </tr>
             </thead>
             <tbody>
-              {voters.map((item) => (
-                <tr key={item.voter}>
-                  <td>{item.voter}</td>
-                  <td>{item.optionIndices.join(", ")}</td>
-                  <td>{item.weightsBps.map((weight) => (weight / 100).toFixed(2)).join(", ")}</td>
-                  <td>{formatEther(item.weight)}</td>
-                </tr>
-              ))}
+              {voters.map((item) => {
+                const votedOptions = item.optionIndices.map((optionIndex) => proposal.options[optionIndex] ?? `#${optionIndex}`);
+                return (
+                  <tr key={item.voter}>
+                    <td>{item.voter}</td>
+                    <td>{votedOptions.join(", ")}</td>
+                    <td>{item.weightsBps.map((weight) => (weight / 100).toFixed(2)).join(", ")}</td>
+                    <td>{formatEther(item.weight)}</td>
+                    <td>{unixToLocalDisplay(item.updatedAt)}</td>
+                  </tr>
+                );
+              })}
               {voters.length === 0 && (
                 <tr>
-                  <td colSpan={4}>No votes yet</td>
+                  <td colSpan={5}>No votes yet</td>
                 </tr>
               )}
             </tbody>

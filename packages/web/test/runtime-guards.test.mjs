@@ -15,6 +15,17 @@ function assert(condition, message) {
   }
 }
 
+function delegateIdTextToBytes32(value) {
+  const normalized = value.trim();
+  if (!normalized) return null;
+  if (/^0x[a-fA-F0-9]{64}$/.test(normalized)) return normalized;
+  if (normalized.startsWith("0x")) return null;
+  const encoded = new TextEncoder().encode(normalized);
+  if (encoded.length > 32) return null;
+  const hex = Array.from(encoded, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `0x${hex.padEnd(64, "0")}`;
+}
+
 const wagmiSource = read("src/wagmi.ts");
 const mainSource = read("src/main.tsx");
 const appSource = read("src/App.tsx");
@@ -77,6 +88,10 @@ assert(
   "App.tsx must support env-driven mock mode toggle."
 );
 assert(
+  appSource.includes("delegateIdTextToBytes32"),
+  "App.tsx must convert delegation id text into bytes32 before submit."
+);
+assert(
   appSource.includes("Connect Mock Wallet"),
   "App.tsx must expose mock wallet connect action."
 );
@@ -99,6 +114,10 @@ assert(
 assert(
   wagmiSource.includes("VITE_USE_MOCK"),
   "wagmi.ts must be aware of mock mode bootstrap."
+);
+assert(
+  delegateIdTextToBytes32("tetubal.eth") === "0x7465747562616c2e657468000000000000000000000000000000000000000000",
+  "delegate id text must encode to expected bytes32 (tetubal.eth sample)."
 );
 
 console.log("Web runtime guards passed");

@@ -14,7 +14,7 @@ test("frontend pages flow in mock mode", async ({ page }) => {
   await expect(page.getByTestId("mock-mode-banner")).toBeVisible();
 
   await page.getByTestId("connect-mock-wallet").click();
-  await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
+  await expect(page.getByTestId("wallet-status")).toHaveText(/^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/);
 
   await page.getByTestId("open-create-space-modal").click();
   await page.getByTestId("space-token-input").fill("0x0000000000000000000000000000000000000001");

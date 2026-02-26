@@ -66,7 +66,7 @@ test("frontend pages flow on real contracts", async ({ page }) => {
       await page.getByTestId("connect-test-wallet").click();
     }
   }
-  await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
+  await expect(page.getByTestId("wallet-status")).toHaveText(/^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/);
 
   await page.getByTestId("open-create-space-modal").click();
   await page.getByTestId("space-token-input").fill(deployment.token);
@@ -168,7 +168,7 @@ test("frontend pages flow on real contracts", async ({ page }) => {
       await testWalletInputReload.fill(ownerKey);
       await page.getByTestId("connect-test-wallet").click();
     }
-    await expect(page.getByTestId("wallet-status")).toContainText("Wallet:");
+    await expect(page.getByTestId("wallet-status")).toHaveText(/^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/);
   }
   await page.getByRole("button", { name: "Create Proposal" }).click();
   await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}/proposals/new$`));

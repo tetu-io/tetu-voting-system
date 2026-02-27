@@ -5,9 +5,12 @@ import { getConfiguredChain } from "./config/chain";
 
 const useMock = import.meta.env.VITE_USE_MOCK === "true";
 const chainId = Number(import.meta.env.VITE_CHAIN_ID ?? 31337);
-const rpcUrl = useMock ? "http://127.0.0.1:8545" : (import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545");
-const configuredChain = getConfiguredChain(chainId, rpcUrl);
+const enableTestWalletUi = import.meta.env.VITE_ENABLE_TEST_WALLET_LOGIN === "true";
 const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID?.trim();
+const useInternalRpc = useMock || enableTestWalletUi || Boolean(walletConnectProjectId);
+const rpcUrl = useInternalRpc ? (import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545") : undefined;
+const configuredChain = getConfiguredChain(chainId, rpcUrl);
+const rpcTimeoutMs = 600_000;
 
 const connectors = walletConnectProjectId
   ? connectorsForWallets(
@@ -31,6 +34,6 @@ export const config = createConfig({
   chains: [configuredChain],
   connectors,
   transports: {
-    [configuredChain.id]: http(rpcUrl)
+    [configuredChain.id]: rpcUrl ? http(rpcUrl, { timeout: rpcTimeoutMs }) : http(undefined, { timeout: rpcTimeoutMs })
   }
 });

@@ -38,18 +38,24 @@ import type { ProposalViewModel, SpaceView, VotingAction, VotingTxResult, Wallet
 
 const contractAddress = (import.meta.env.VITE_VOTING_CONTRACT ??
   "0x0000000000000000000000000000000000000000") as `0x${string}`;
-const rpcUrl = import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545";
+const eventLogsRpcUrl = import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545";
 const expectedChainId = Number(import.meta.env.VITE_CHAIN_ID ?? 31337);
-const configuredChain = getConfiguredChain(expectedChainId, rpcUrl);
-const expectedChainName = configuredChain.name;
 const defaultTestPrivateKey = (import.meta.env.VITE_TEST_PRIVATE_KEY as Hex | undefined) ?? "";
 const useMock = import.meta.env.VITE_USE_MOCK === "true";
 const enableTestWalletUi = import.meta.env.VITE_ENABLE_TEST_WALLET_LOGIN === "true";
+const walletConnectProjectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID?.trim();
+const useInternalRpc = useMock || enableTestWalletUi || Boolean(walletConnectProjectId);
+const rpcUrl = useInternalRpc ? (import.meta.env.VITE_RPC_URL ?? "http://127.0.0.1:8545") : undefined;
+const configuredChain = getConfiguredChain(expectedChainId, rpcUrl);
+const expectedChainName = configuredChain.name;
 const blockTimeSeconds = Number(import.meta.env.VITE_BLOCK_TIME_SECONDS ?? 12);
-const staticPublicClient = createPublicClient({
-  chain: configuredChain,
-  transport: http(rpcUrl)
-});
+const rpcTimeoutMs = 600_000;
+const staticPublicClient = rpcUrl
+  ? createPublicClient({
+      chain: configuredChain,
+      transport: http(rpcUrl, { timeout: rpcTimeoutMs })
+    })
+  : null;
 const delegateRegistryAbi = [
   {
     type: "function",
@@ -69,11 +75,15 @@ const delegateRegistryAbi = [
     outputs: []
   }
 ] as const;
+const readSpaceAbi = parseAbiItem(
+  "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description, bytes32 delegationId))"
+);
 const erc20SymbolStringAbi = parseAbiItem("function symbol() view returns (string)");
 const erc20SymbolBytes32Abi = parseAbiItem("function symbol() view returns (bytes32)");
 
 type RuntimeContext = {
   client: PublicClient;
+  eventLogsClient: PublicClient;
   mockService: ReturnType<typeof getMockVotingService> & MockVotingViews;
   effectiveAddress: WalletAddress | null | undefined;
   effectiveConnected: boolean;
@@ -211,13 +221,30 @@ function useVotingRuntime(): RuntimeContext {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [testWalletPrivateKey, setTestWalletPrivateKey] = useState(defaultTestPrivateKey);
   const [testWalletConnected, setTestWalletConnected] = useState(Boolean(defaultTestPrivateKey));
+  const fallbackPublicClient = useMemo(
+    () =>
+      createPublicClient({
+        chain: configuredChain,
+        transport: http(undefined, { timeout: rpcTimeoutMs })
+      }),
+    []
+  );
+  const eventLogsClient = useMemo(
+    () =>
+      createPublicClient({
+        chain: getConfiguredChain(expectedChainId, eventLogsRpcUrl),
+        transport: http(eventLogsRpcUrl, { timeout: rpcTimeoutMs })
+      }),
+    []
+  );
 
   const testWalletClient = useMemo(() => {
+    if (!enableTestWalletUi || !rpcUrl) return null;
     if (!isValidPrivateKey(testWalletPrivateKey)) return null;
     return createWalletClient({
       account: privateKeyToAccount(testWalletPrivateKey),
       chain: configuredChain,
-      transport: http(rpcUrl)
+      transport: http(rpcUrl, { timeout: rpcTimeoutMs })
     });
   }, [testWalletPrivateKey]);
 
@@ -225,7 +252,7 @@ function useVotingRuntime(): RuntimeContext {
   const connectedChainId = accountChainId ?? chainId;
   const isWrongNetwork = !useMock && isConnected && !usingTestWallet && connectedChainId !== expectedChainId;
   const canSwitchNetwork = isWrongNetwork && typeof switchChainAsync === "function";
-  const client = isWrongNetwork ? staticPublicClient : wagmiPublicClient ?? staticPublicClient;
+  const client = wagmiPublicClient ?? staticPublicClient ?? fallbackPublicClient;
   const mockConnectedAddress = useMock ? mockService.getConnectedAddress() : null;
   const effectiveAddress = useMock ? mockConnectedAddress : usingTestWallet ? testWalletClient.account.address : address;
   const effectiveConnected = useMock ? Boolean(mockConnectedAddress) : isConnected || usingTestWallet;
@@ -365,6 +392,7 @@ function useVotingRuntime(): RuntimeContext {
 
   return {
     client,
+    eventLogsClient,
     mockService,
     effectiveAddress,
     effectiveConnected,
@@ -435,28 +463,8 @@ function Header({ runtime }: { runtime: RuntimeContext }) {
           {!runtime.effectiveConnected && !useMock && (
             <>
               <Button data-testid="connect-wallet" variant="primary" onClick={() => openConnectModal?.()}>
-                Login
+                Connect
               </Button>
-              {enableTestWalletUi && (
-                <>
-                  <Input
-                    data-testid="test-wallet-key-input"
-                    placeholder="0x... private key for local test wallet"
-                    value={runtime.testWalletPrivateKey}
-                    onChange={(e) => runtime.setTestWalletPrivateKey(e.target.value)}
-                    style={{ minWidth: 320 }}
-                  />
-                  {runtime.testWalletValid ? (
-                    <Button data-testid="connect-test-wallet" onClick={runtime.connectTestWallet}>
-                      Login (test key)
-                    </Button>
-                  ) : (
-                    <span data-testid="invalid-test-wallet-key" className="warning text__paragraph">
-                      Invalid test private key format
-                    </span>
-                  )}
-                </>
-              )}
             </>
           )}
 
@@ -491,6 +499,48 @@ function Header({ runtime }: { runtime: RuntimeContext }) {
   );
 }
 
+function WalletConnectGate({ runtime }: { runtime: RuntimeContext }) {
+  const { openConnectModal } = useConnectModal();
+
+  return (
+    <Card data-testid="wallet-connect-gate" className="stack-4">
+      <h2 className="text__title2" style={{ margin: 0 }}>
+        Connect wallet to continue
+      </h2>
+      <p className="text__paragraph" style={{ margin: 0 }}>
+        Frontend is locked until wallet connection is established on chain {expectedChainName} ({expectedChainId}).
+      </p>
+      <div className="row">
+        <Button data-testid="wallet-connect-gate-btn" variant="primary" onClick={() => openConnectModal?.()}>
+          Connect Wallet
+        </Button>
+      </div>
+      {enableTestWalletUi && (
+        <>
+          <Field>
+            <FieldLabel>Test private key (local/e2e)</FieldLabel>
+            <Input
+              data-testid="test-wallet-key-input"
+              placeholder="0x... private key for local test wallet"
+              value={runtime.testWalletPrivateKey}
+              onChange={(e) => runtime.setTestWalletPrivateKey(e.target.value)}
+            />
+          </Field>
+          {runtime.testWalletValid ? (
+            <Button data-testid="connect-test-wallet" onClick={runtime.connectTestWallet}>
+              Login (test key)
+            </Button>
+          ) : (
+            <span data-testid="invalid-test-wallet-key" className="warning text__paragraph">
+              Invalid test private key format
+            </span>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 function detectStatusTone(message: string): "info" | "success" | "warning" | "error" {
   if (!message) return "info";
   const lowered = message.toLowerCase();
@@ -514,6 +564,7 @@ function AppLayout({ runtime, children }: { runtime: RuntimeContext; children: R
   const statusTone = detectStatusTone(runtime.statusMessage);
   const showStatusToast = Boolean(runtime.statusMessage) && !dismissedToasts.status;
   const showTxProgressToast = runtime.txPending && !dismissedToasts.txProgress;
+  const showConnectGate = !useMock && !runtime.effectiveConnected;
 
   function dismissToast(key: ToastKey) {
     setDismissedToasts((prev) => ({ ...prev, [key]: true }));
@@ -556,7 +607,7 @@ function AppLayout({ runtime, children }: { runtime: RuntimeContext; children: R
   return (
     <main className="app-shell app-main">
       <Header runtime={runtime} />
-      {children}
+      {showConnectGate ? <WalletConnectGate runtime={runtime} /> : children}
       <div className="app-toast-stack" aria-live="polite" aria-atomic="false">
         {useMock && !dismissedToasts.mock && (
           <StatusMessage data-testid="mock-mode-banner" tone="warning" className="app-toast">
@@ -651,7 +702,7 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
         setSpaces(runtime.mockService.listSpaces());
         return;
       }
-      setSpaces(await fetchRealSpaces(runtime.client, contractAddress));
+      setSpaces(await fetchRealSpaces(runtime.client, contractAddress, runtime.eventLogsClient));
     }
     void run();
   }, [runtime]);
@@ -662,10 +713,10 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
         setSpaces(runtime.mockService.listSpaces());
         return;
       }
-      setSpaces(await fetchRealSpaces(runtime.client, contractAddress));
+      setSpaces(await fetchRealSpaces(runtime.client, contractAddress, runtime.eventLogsClient));
     }
     void run();
-  }, [runtime.client, runtime.mockService, runtime.refreshNonce]);
+  }, [runtime.client, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -816,28 +867,114 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
   const parsedSpaceId = spaceId && /^\d+$/.test(spaceId) ? BigInt(spaceId) : null;
   const [space, setSpace] = useState<SpaceView | null>(null);
   const [proposals, setProposals] = useState<ProposalViewModel[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingLog, setLoadingLog] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useState("proposals");
 
   useEffect(() => {
     if (parsedSpaceId === null) return;
+    let cancelled = false;
+    const appendLoadingLog = (message: string) => {
+      if (cancelled) return;
+      setLoadingLog((prev) => [...prev, message]);
+    };
+
     async function run() {
+      setIsLoading(true);
+      setLoadingLog([`Starting data load for space #${parsedSpaceId.toString()}...`]);
       if (useMock) {
-        setSpace(runtime.mockService.getSpace(parsedSpaceId));
-        setProposals(runtime.mockService.listProposalsBySpace(parsedSpaceId));
+        appendLoadingLog("Loading space details from mock service...");
+        const mockSpace = runtime.mockService.getSpace(parsedSpaceId);
+        appendLoadingLog("Loading proposals list from mock service...");
+        const mockProposals = runtime.mockService.listProposalsBySpace(parsedSpaceId);
+        if (!cancelled) {
+          setSpace(mockSpace);
+          setProposals(mockProposals);
+        }
+        appendLoadingLog("Space page data is ready.");
+        if (!cancelled) setIsLoading(false);
         return;
       }
-      const [allSpaces, bySpace] = await Promise.all([
-        fetchRealSpaces(runtime.client, contractAddress),
-        fetchRealProposalsBySpace(runtime.client, contractAddress, parsedSpaceId)
-      ]);
-      setSpace(allSpaces.find((item) => item.id === parsedSpaceId) ?? null);
-      setProposals(bySpace);
+
+      appendLoadingLog("Fetching space details from blockchain...");
+      const spacePromise = runtime.client.readContract({
+        address: contractAddress,
+        abi: [readSpaceAbi],
+        functionName: "getSpace",
+        args: [parsedSpaceId]
+      }).then((raw) => {
+        appendLoadingLog("Space details loaded.");
+        return {
+          id: raw.id,
+          token: raw.token as WalletAddress,
+          owner: raw.owner as WalletAddress,
+          name: raw.name,
+          description: raw.description,
+          delegationId: raw.delegationId as `0x${string}`
+        } satisfies SpaceView;
+      });
+
+      appendLoadingLog("Fetching proposals for this space...");
+      const proposalsPromise = fetchRealProposalsBySpace(runtime.client, contractAddress, parsedSpaceId, runtime.eventLogsClient).then((items) => {
+        appendLoadingLog(`Proposals loaded (${items.length}).`);
+        return items;
+      });
+
+      try {
+        const [nextSpace, bySpace] = await Promise.all([spacePromise, proposalsPromise]);
+        if (!cancelled) {
+          setSpace(nextSpace);
+          setProposals(bySpace);
+        }
+        appendLoadingLog("Space page data is ready.");
+      } catch (error) {
+        appendLoadingLog(`Loading failed: ${normalizeError(error)}.`);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
     }
     void run();
-  }, [parsedSpaceId, runtime.client, runtime.mockService, runtime.refreshNonce]);
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedSpaceId, runtime.client, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
 
   if (parsedSpaceId === null) return <p>Invalid space id</p>;
+  if (isLoading) {
+    return (
+      <section className="page-stack">
+        <PageNavigation
+          backTo="/"
+          breadcrumbs={[
+            { label: "Spaces", to: "/" },
+            { label: `Space #${parsedSpaceId.toString()}` }
+          ]}
+        />
+        <Card className="page-loader">
+          <div className="page-loader__spinner" aria-hidden="true" />
+          <h2 className="text__title3" style={{ margin: 0 }}>
+            Loading space #{parsedSpaceId.toString()}
+          </h2>
+          <p className="text__paragraph muted" style={{ margin: 0 }}>
+            Waiting until all required data is loaded.
+          </p>
+          <div className="page-loader__log-wrap">
+            <p className="text__caption muted" style={{ margin: 0 }}>
+              Loading log
+            </p>
+            <ul className="page-loader__log" data-testid="space-loading-log">
+              {loadingLog.map((entry, idx) => (
+                <li key={`${idx}-${entry}`} className="text__caption">
+                  [{idx + 1}] {entry}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      </section>
+    );
+  }
   const paged = paginateItems(proposals, page, 10);
 
   return (
@@ -1250,7 +1387,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
           functionName: "getProposalTallies",
           args: [parsedProposalId]
         }),
-        fetchRealProposalVoters(runtime.client, contractAddress, parsedProposalId)
+        fetchRealProposalVoters(runtime.client, contractAddress, parsedProposalId, runtime.eventLogsClient)
       ]);
       const normalizedProposal: ProposalViewModel = {
         id: nextProposal.id,
@@ -1281,7 +1418,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
       }
     }
     void run();
-  }, [parsedProposalId, runtime.client, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce]);
+  }, [parsedProposalId, runtime.client, runtime.eventLogsClient, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce]);
 
   if (parsedProposalId === null) return <p>Invalid proposal id</p>;
   if (!proposal || !tallies) {

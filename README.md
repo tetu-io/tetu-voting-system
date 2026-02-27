@@ -20,7 +20,7 @@ Simplified Snapshot-like voting system (v1) with:
 Copy `.env.example` to `.env` and adjust values when needed.
 
 Key variables:
-- `VITE_RPC_URL`
+- `VITE_RPC_URL` (used by internal test wallet mode and WalletConnect/mock transports; regular injected-wallet mode does not require this env)
 - `VITE_CHAIN_ID`
 - `VITE_VOTING_CONTRACT`
 - `VITE_WALLETCONNECT_PROJECT_ID` (required for Rainbow Wallet/WalletConnect in browser mode)
@@ -42,9 +42,10 @@ The UI is route-based and includes:
 - `/proposals/:proposalId` - tallies, voters table, and vote action (single click for single-choice, arbitrary weight inputs for multi-choice that frontend auto-normalizes to percentages).
 
 Wallet network guard (web3 safety):
+- frontend is locked behind wallet connect in real mode (`VITE_USE_MOCK=false`): pages and contract reads open only after wallet connection;
 - when an injected wallet is connected to a chain different from `VITE_CHAIN_ID`, frontend blocks all write actions;
 - UI shows a warning with expected/current chain id and a `Switch Network` action;
-- reads continue via configured RPC so view pages still work while user fixes wallet network.
+- contract event-log queries are fetched through `VITE_RPC_URL` (env RPC), while regular reads/writes use the active wallet client in real mode.
 
 ## Install
 

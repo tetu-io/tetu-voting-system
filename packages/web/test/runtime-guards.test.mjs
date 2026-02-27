@@ -67,13 +67,17 @@ assert(
 
 assert(
   mainSource.includes("RainbowKitProvider"),
-  "main.tsx must wrap app with RainbowKitProvider so Login opens Rainbow modal."
+  "main.tsx must wrap app with RainbowKitProvider so Connect opens Rainbow modal."
 );
 
 // Minimal UX guard for manual smoke: connect CTA should remain visible in fresh state.
 assert(
-  appSource.includes("Login"),
-  "App.tsx must expose login action in default UI."
+  appSource.includes("Connect"),
+  "App.tsx must expose connect action in default UI."
+);
+assert(
+  appSource.includes("Connect wallet to continue"),
+  "App.tsx must hard-lock runtime pages behind wallet connect gate in real mode."
 );
 assert(
   appSource.includes("openConnectModal"),

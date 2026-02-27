@@ -72,6 +72,19 @@ describe("VotingCore", function () {
     ).to.be.revertedWithCustomError(voting, "InvalidTimeRange");
   });
 
+  it("allows space owner to create proposal without proposer role", async function () {
+    const { voting, spaceId, owner } = await loadFixture(deployFixture);
+    await (await voting.setProposer(spaceId, owner.address, false)).wait();
+    expect(await voting.isProposer(spaceId, owner.address)).to.equal(true);
+
+    const now = await time.latest();
+    await expect(
+      voting
+        .connect(owner)
+        .createProposal(spaceId, "owner proposal", "d", ["one", "two"], BigInt(now + 1), BigInt(now + 10), false)
+    ).to.emit(voting, "ProposalCreated");
+  });
+
   it("handles first vote and re-vote with tally replacement", async function () {
     const { voting, spaceId, proposer, voter } = await loadFixture(deployFixture);
     await (await voting.setProposer(spaceId, proposer.address, true)).wait();

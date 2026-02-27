@@ -44,14 +44,16 @@ function findKnownChain(chainId: number): Chain | undefined {
   return knownChains.find((item) => item.id === chainId);
 }
 
-export function getConfiguredChain(chainId: number, rpcUrl: string): Chain {
+export function getConfiguredChain(chainId: number, rpcUrl?: string): Chain {
   const known = findKnownChain(chainId);
-  if (known) return overrideRpc(known, rpcUrl);
+  if (known) return rpcUrl ? overrideRpc(known, rpcUrl) : known;
   return defineChain({
     id: chainId,
     name: `Chain ${chainId}`,
     nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 },
-    rpcUrls: { default: { http: [rpcUrl] }, public: { http: [rpcUrl] } }
+    rpcUrls: rpcUrl
+      ? { default: { http: [rpcUrl] }, public: { http: [rpcUrl] } }
+      : { default: { http: [] }, public: { http: [] } }
   });
 }
 

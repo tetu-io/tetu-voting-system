@@ -26,12 +26,12 @@ const readProposalAbi = parseAbiItem(
 );
 
 export async function fetchRealActivityLogs(
-  client: PublicClient,
+  logsClient: PublicClient,
   address: `0x${string}`
 ): Promise<EventLikeLog[]> {
   const [spaceCreated, spaceAdmins, spaceProposers, proposalCreated, proposalDeletedLogs, voteCast, voteRecast] =
     await Promise.all([
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem(
           "event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"
@@ -39,13 +39,13 @@ export async function fetchRealActivityLogs(
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem("event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed)"),
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem(
           "event SpaceProposerUpdated(uint256 indexed spaceId, address indexed account, bool allowed)"
@@ -53,7 +53,7 @@ export async function fetchRealActivityLogs(
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem(
           "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
@@ -61,13 +61,13 @@ export async function fetchRealActivityLogs(
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem(
           "event VoteCast(uint256 indexed proposalId, address indexed voter, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 totalWeight)"
@@ -75,7 +75,7 @@ export async function fetchRealActivityLogs(
         fromBlock: 0n,
         toBlock: "latest"
       }),
-      client.getLogs({
+      logsClient.getLogs({
         address,
         event: parseAbiItem(
           "event VoteRecast(uint256 indexed proposalId, address indexed voter, uint256 oldTotalWeight, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 newTotalWeight)"
@@ -103,11 +103,11 @@ export async function fetchRealActivityLogs(
 }
 
 export async function fetchRealActiveProposalIds(
-  client: PublicClient,
+  logsClient: PublicClient,
   address: `0x${string}`
 ): Promise<bigint[]> {
   const [createdLogs, deletedLogs] = await Promise.all([
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem(
         "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
@@ -115,7 +115,7 @@ export async function fetchRealActiveProposalIds(
       fromBlock: 0n,
       toBlock: "latest"
     }),
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
       fromBlock: 0n,
@@ -134,8 +134,8 @@ export async function fetchRealActiveProposalIds(
   return createdIds.filter((id) => !deletedIds.has(id));
 }
 
-export async function fetchRealSpaceIds(client: PublicClient, address: `0x${string}`): Promise<bigint[]> {
-  const logs = await client.getLogs({
+export async function fetchRealSpaceIds(logsClient: PublicClient, address: `0x${string}`): Promise<bigint[]> {
+  const logs = await logsClient.getLogs({
     address,
     event: parseAbiItem("event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"),
     fromBlock: 0n,
@@ -147,8 +147,8 @@ export async function fetchRealSpaceIds(client: PublicClient, address: `0x${stri
   return [...new Set(ids.map((id) => id.toString()))].map((id) => BigInt(id)).sort((a, b) => Number(a - b));
 }
 
-export async function fetchRealSpaces(client: PublicClient, address: `0x${string}`): Promise<SpaceView[]> {
-  const ids = await fetchRealSpaceIds(client, address);
+export async function fetchRealSpaces(client: PublicClient, address: `0x${string}`, logsClient: PublicClient = client): Promise<SpaceView[]> {
+  const ids = await fetchRealSpaceIds(logsClient, address);
   const spaces = await Promise.all(
     ids.map(async (spaceId) => {
       try {
@@ -177,10 +177,11 @@ export async function fetchRealSpaces(client: PublicClient, address: `0x${string
 export async function fetchRealProposalsBySpace(
   client: PublicClient,
   address: `0x${string}`,
-  spaceId: bigint
+  spaceId: bigint,
+  logsClient: PublicClient = client
 ): Promise<ProposalViewModel[]> {
   const [createdLogs, deletedLogs] = await Promise.all([
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem(
         "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
@@ -189,7 +190,7 @@ export async function fetchRealProposalsBySpace(
       fromBlock: 0n,
       toBlock: "latest"
     }),
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
       fromBlock: 0n,
@@ -244,10 +245,11 @@ export async function fetchRealProposalsBySpace(
 export async function fetchRealProposalVoters(
   client: PublicClient,
   address: `0x${string}`,
-  proposalId: bigint
+  proposalId: bigint,
+  logsClient: PublicClient = client
 ): Promise<ProposalVoterView[]> {
   const [voteCastLogs, voteRecastLogs] = await Promise.all([
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem(
         "event VoteCast(uint256 indexed proposalId, address indexed voter, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 totalWeight)"
@@ -256,7 +258,7 @@ export async function fetchRealProposalVoters(
       fromBlock: 0n,
       toBlock: "latest"
     }),
-    client.getLogs({
+    logsClient.getLogs({
       address,
       event: parseAbiItem(
         "event VoteRecast(uint256 indexed proposalId, address indexed voter, uint256 oldTotalWeight, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 newTotalWeight)"
@@ -277,7 +279,7 @@ export async function fetchRealProposalVoters(
   const blocks = await Promise.all(
     uniqueBlockNumbers.map(async (blockNumber) => ({
       blockNumber,
-      block: await client.getBlock({ blockNumber })
+      block: await logsClient.getBlock({ blockNumber })
     }))
   );
   const blockTimestampByNumber = new Map<bigint, bigint>(blocks.map(({ blockNumber, block }) => [blockNumber, block.timestamp]));

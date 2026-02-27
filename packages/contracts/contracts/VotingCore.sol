@@ -223,7 +223,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     ) external returns (uint256) {
         Space storage s = _spaces[spaceId];
         if (s.id == 0) revert SpaceNotFound();
-        if (!_spaceProposers[spaceId][msg.sender]) revert Unauthorized();
+        if (msg.sender != s.owner && !_spaceProposers[spaceId][msg.sender]) revert Unauthorized();
         if (options.length < 2) revert InvalidOption();
         if (startAt >= endAt) revert InvalidTimeRange();
 
@@ -425,7 +425,9 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     }
 
     function isProposer(uint256 spaceId, address account) external view returns (bool) {
-        return _spaceProposers[spaceId][account];
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) return false;
+        return account == s.owner || _spaceProposers[spaceId][account];
     }
 
     function _getVotingPower(uint256 spaceId, address voter, address token, bytes32 delegationId)

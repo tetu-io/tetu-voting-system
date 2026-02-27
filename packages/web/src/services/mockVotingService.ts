@@ -97,7 +97,9 @@ class InMemoryVotingService implements VotingService {
   }
 
   isProposer(spaceId: bigint, account: WalletAddress): boolean {
-    return this.proposers.get(spaceId)?.has(account) ?? false;
+    const space = this.spaces.get(spaceId);
+    if (!space) return false;
+    return account === space.owner || (this.proposers.get(spaceId)?.has(account) ?? false);
   }
 
   getActiveProposalIds(): bigint[] {

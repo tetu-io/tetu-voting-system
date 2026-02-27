@@ -37,6 +37,18 @@ function loadNetworkConfig(networkName) {
   if (config.confirmations !== undefined && (!Number.isInteger(config.confirmations) || config.confirmations < 0)) {
     throw new Error(`Invalid confirmations in ${filePath}: expected non-negative integer`);
   }
+  if (
+    config.deploymentTimeoutMs !== undefined &&
+    (!Number.isInteger(config.deploymentTimeoutMs) || config.deploymentTimeoutMs <= 0)
+  ) {
+    throw new Error(`Invalid deploymentTimeoutMs in ${filePath}: expected positive integer`);
+  }
+  if (
+    config.deploymentPollingIntervalMs !== undefined &&
+    (!Number.isInteger(config.deploymentPollingIntervalMs) || config.deploymentPollingIntervalMs <= 0)
+  ) {
+    throw new Error(`Invalid deploymentPollingIntervalMs in ${filePath}: expected positive integer`);
+  }
   if (config.verify !== undefined && typeof config.verify !== "boolean") {
     throw new Error(`Invalid verify in ${filePath}: expected boolean`);
   }
@@ -52,6 +64,8 @@ function loadNetworkConfig(networkName) {
     chainId: config.chainId,
     rpcUrl: config.rpcUrl,
     confirmations: config.confirmations ?? 1,
+    deploymentTimeoutMs: config.deploymentTimeoutMs ?? 300000,
+    deploymentPollingIntervalMs: config.deploymentPollingIntervalMs ?? 5000,
     verify: config.verify ?? false,
     writeSharedArtifacts: config.writeSharedArtifacts ?? true,
     initialOwner: config.initialOwner,

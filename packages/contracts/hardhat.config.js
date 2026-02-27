@@ -64,9 +64,11 @@ module.exports = {
     deployments: "deployments"
   },
   etherscan: {
-    apiKey: {
-      polygon: process.env.POLYGONSCAN_API_KEY || "",
-      arbitrumSepolia: process.env.ARBISCAN_API_KEY || ""
-    }
+    // Hardhat verify uses Etherscan API v2 with a single key.
+    apiKey:
+      process.env.ETHERSCAN_API_KEY ||
+      process.env.POLYGONSCAN_API_KEY ||
+      process.env.ARBISCAN_API_KEY ||
+      ""
   }
 };

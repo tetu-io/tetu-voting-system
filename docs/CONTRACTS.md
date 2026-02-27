@@ -25,6 +25,8 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 - role mappings:
   - `admins[address] => bool`
   - `proposers[address] => bool`
+- index storage:
+  - `spaceIds[]` (enumerable spaces list for pagination)
 
 ## 3.2 Proposal
 - `id`
@@ -38,6 +40,8 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
 - `deleted` (`bool`)
 - `totalVotesCast` (raw count of cast/recast actions)
 - `allowMultipleChoices` (`bool`)
+- index storage:
+  - `proposalIdsBySpace[spaceId] => uint256[]` (enumerable per-space proposals)
 
 ## 3.3 Vote State
 - latest vote receipt per user/proposal:
@@ -49,6 +53,9 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - `weightsBps` (`uint16[]`, sum = 10000)
 - tallies:
   - `proposalOptionWeight[proposalId][optionIndex] => uint256`
+- voter index:
+  - `proposalVoters[proposalId] => address[]`
+  - `proposalVoterIndexed[proposalId][voter] => bool` (first-vote guard for unique list)
 
 ## 4. Storage Layout Principles
 
@@ -76,9 +83,15 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - `setDelegateForSpace(spaceId, delegate)` / `clearDelegateForSpace(spaceId)` (sync wrappers that require registry state to match requested action)
 - Read:
   - `getSpace(spaceId)`
+  - `getSpaceIdsCount()`
+  - `getSpaceIdsPage(offset, limit)`
   - `getProposal(proposalId)`
+  - `getProposalIdsBySpaceCount(spaceId, includeDeleted)`
+  - `getProposalIdsBySpacePage(spaceId, offset, limit, includeDeleted)`
   - `getProposalTallies(proposalId)`
   - `getVoteReceipt(proposalId, voter)`
+  - `getProposalVotersCount(proposalId)`
+  - `getProposalVotersPage(proposalId, offset, limit)`
   - `getVotingPower(spaceId, voter)`
 
 ## 6. Validation Rules
@@ -182,6 +195,7 @@ the same token owner's weight from being counted by multiple voters in one propo
 - Network config is file-based and separate per network:
   - `packages/contracts/deploy-config/polygon.yaml`
   - `packages/contracts/deploy-config/arbitrumSepolia.yaml`
+  - per-network knobs include `confirmations`, `deploymentTimeoutMs`, `deploymentPollingIntervalMs`.
 - Network selection is standard hardhat argument:
   - `hardhat deploy --network polygon`
   - `hardhat deploy --network arbitrumSepolia`

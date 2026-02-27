@@ -24,6 +24,47 @@ const readSpaceAbi = parseAbiItem(
 const readProposalAbi = parseAbiItem(
   "function getProposal(uint256 proposalId) view returns ((uint256 id, uint256 spaceId, address author, string title, string description, string[] options, uint64 startAt, uint64 endAt, bool deleted, uint256 totalVotesCast, bool allowMultipleChoices))"
 );
+const getSpaceIdsCountAbi = parseAbiItem("function getSpaceIdsCount() view returns (uint256)");
+const getSpaceIdsPageAbi = parseAbiItem("function getSpaceIdsPage(uint256 offset, uint256 limit) view returns (uint256[])");
+const getProposalIdsBySpaceCountAbi = parseAbiItem("function getProposalIdsBySpaceCount(uint256 spaceId, bool includeDeleted) view returns (uint256)");
+const getProposalIdsBySpacePageAbi =
+  parseAbiItem("function getProposalIdsBySpacePage(uint256 spaceId, uint256 offset, uint256 limit, bool includeDeleted) view returns (uint256[])");
+const getProposalVotersCountAbi = parseAbiItem("function getProposalVotersCount(uint256 proposalId) view returns (uint256)");
+const getProposalVotersPageAbi = parseAbiItem("function getProposalVotersPage(uint256 proposalId, uint256 offset, uint256 limit) view returns (address[])");
+const getVoteReceiptAbi = parseAbiItem(
+  "function getVoteReceipt(uint256 proposalId, address voter) view returns ((bool hasVoted, uint16 optionIndex, uint256 weight, uint64 updatedAt, uint16[] optionIndices, uint16[] weightsBps, address[] contributors))"
+);
+const PAGE_CHUNK = 100n;
+
+async function readUintIdsPage(
+  client: PublicClient,
+  address: `0x${string}`,
+  countAbi: typeof getSpaceIdsCountAbi | typeof getProposalIdsBySpaceCountAbi,
+  pageAbi: typeof getSpaceIdsPageAbi | typeof getProposalIdsBySpacePageAbi,
+  countArgs: readonly unknown[],
+  pageArgsBuilder: (offset: bigint, limit: bigint) => readonly unknown[]
+): Promise<bigint[]> {
+  const total = (await client.readContract({
+    address,
+    abi: [countAbi],
+    functionName: countAbi.name,
+    args: countArgs
+  })) as bigint;
+  if (total === 0n) return [];
+  const ids: bigint[] = [];
+  for (let offset = 0n; offset < total; offset += PAGE_CHUNK) {
+    const remaining = total - offset;
+    const limit = remaining < PAGE_CHUNK ? remaining : PAGE_CHUNK;
+    const page = (await client.readContract({
+      address,
+      abi: [pageAbi],
+      functionName: pageAbi.name,
+      args: pageArgsBuilder(offset, limit)
+    })) as bigint[];
+    ids.push(...page);
+  }
+  return ids;
+}
 
 export async function fetchRealActivityLogs(
   logsClient: PublicClient,
@@ -103,52 +144,30 @@ export async function fetchRealActivityLogs(
 }
 
 export async function fetchRealActiveProposalIds(
-  logsClient: PublicClient,
+  client: PublicClient,
   address: `0x${string}`
 ): Promise<bigint[]> {
-  const [createdLogs, deletedLogs] = await Promise.all([
-    logsClient.getLogs({
-      address,
-      event: parseAbiItem(
-        "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
-      ),
-      fromBlock: 0n,
-      toBlock: "latest"
-    }),
-    logsClient.getLogs({
-      address,
-      event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
-      fromBlock: 0n,
-      toBlock: "latest"
-    })
-  ]);
-
-  const createdIds = createdLogs
-    .map((log) => (log.args as { proposalId?: bigint }).proposalId)
-    .filter((id): id is bigint => typeof id === "bigint");
-  const deletedIds = new Set(
-    deletedLogs
-      .map((log) => (log.args as { proposalId?: bigint }).proposalId)
-      .filter((id): id is bigint => typeof id === "bigint")
+  const spaceIds = await fetchRealSpaceIds(client, address);
+  const proposalIdChunks = await Promise.all(
+    spaceIds.map((spaceId) =>
+      readUintIdsPage(client, address, getProposalIdsBySpaceCountAbi, getProposalIdsBySpacePageAbi, [spaceId, false], (offset, limit) => [
+        spaceId,
+        offset,
+        limit,
+        false
+      ])
+    )
   );
-  return createdIds.filter((id) => !deletedIds.has(id));
+  return proposalIdChunks.flat().sort((a, b) => Number(a - b));
 }
 
-export async function fetchRealSpaceIds(logsClient: PublicClient, address: `0x${string}`): Promise<bigint[]> {
-  const logs = await logsClient.getLogs({
-    address,
-    event: parseAbiItem("event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"),
-    fromBlock: 0n,
-    toBlock: "latest"
-  });
-  const ids = logs
-    .map((log) => (log.args as { spaceId?: bigint }).spaceId)
-    .filter((id): id is bigint => typeof id === "bigint");
-  return [...new Set(ids.map((id) => id.toString()))].map((id) => BigInt(id)).sort((a, b) => Number(a - b));
+export async function fetchRealSpaceIds(client: PublicClient, address: `0x${string}`): Promise<bigint[]> {
+  return readUintIdsPage(client, address, getSpaceIdsCountAbi, getSpaceIdsPageAbi, [], (offset, limit) => [offset, limit]);
 }
 
-export async function fetchRealSpaces(client: PublicClient, address: `0x${string}`, logsClient: PublicClient = client): Promise<SpaceView[]> {
-  const ids = await fetchRealSpaceIds(logsClient, address);
+export async function fetchRealSpaces(client: PublicClient, address: `0x${string}`, _logsClient: PublicClient = client): Promise<SpaceView[]> {
+  void _logsClient;
+  const ids = await fetchRealSpaceIds(client, address);
   const spaces = await Promise.all(
     ids.map(async (spaceId) => {
       try {
@@ -178,36 +197,17 @@ export async function fetchRealProposalsBySpace(
   client: PublicClient,
   address: `0x${string}`,
   spaceId: bigint,
-  logsClient: PublicClient = client
+  _logsClient: PublicClient = client
 ): Promise<ProposalViewModel[]> {
-  const [createdLogs, deletedLogs] = await Promise.all([
-    logsClient.getLogs({
-      address,
-      event: parseAbiItem(
-        "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
-      ),
-      args: { spaceId },
-      fromBlock: 0n,
-      toBlock: "latest"
-    }),
-    logsClient.getLogs({
-      address,
-      event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
-      fromBlock: 0n,
-      toBlock: "latest"
-    })
-  ]);
-  const deleted = new Set(
-    deletedLogs
-      .map((log) => (log.args as { proposalId?: bigint }).proposalId)
-      .filter((id): id is bigint => typeof id === "bigint")
-      .map((id) => id.toString())
+  void _logsClient;
+  const ids = await readUintIdsPage(
+    client,
+    address,
+    getProposalIdsBySpaceCountAbi,
+    getProposalIdsBySpacePageAbi,
+    [spaceId, false],
+    (offset, limit) => [spaceId, offset, limit, false]
   );
-
-  const ids = createdLogs
-    .map((log) => (log.args as { proposalId?: bigint }).proposalId)
-    .filter((id): id is bigint => typeof id === "bigint")
-    .filter((id) => !deleted.has(id.toString()));
 
   const proposals = await Promise.all(
     ids.map(async (proposalId) => {
@@ -246,73 +246,55 @@ export async function fetchRealProposalVoters(
   client: PublicClient,
   address: `0x${string}`,
   proposalId: bigint,
-  logsClient: PublicClient = client
+  _logsClient: PublicClient = client
 ): Promise<ProposalVoterView[]> {
-  const [voteCastLogs, voteRecastLogs] = await Promise.all([
-    logsClient.getLogs({
+  void _logsClient;
+  const total = (await client.readContract({
+    address,
+    abi: [getProposalVotersCountAbi],
+    functionName: "getProposalVotersCount",
+    args: [proposalId]
+  })) as bigint;
+  if (total === 0n) return [];
+
+  const voters: WalletAddress[] = [];
+  for (let offset = 0n; offset < total; offset += PAGE_CHUNK) {
+    const remaining = total - offset;
+    const limit = remaining < PAGE_CHUNK ? remaining : PAGE_CHUNK;
+    const page = (await client.readContract({
       address,
-      event: parseAbiItem(
-        "event VoteCast(uint256 indexed proposalId, address indexed voter, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 totalWeight)"
-      ),
-      args: { proposalId },
-      fromBlock: 0n,
-      toBlock: "latest"
-    }),
-    logsClient.getLogs({
-      address,
-      event: parseAbiItem(
-        "event VoteRecast(uint256 indexed proposalId, address indexed voter, uint256 oldTotalWeight, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 newTotalWeight)"
-      ),
-      args: { proposalId },
-      fromBlock: 0n,
-      toBlock: "latest"
-    })
-  ]);
-
-  const ordered = [...voteCastLogs, ...voteRecastLogs].sort((a, b) => {
-    const byBlock = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
-    if (byBlock !== 0) return byBlock;
-    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
-  });
-
-  const uniqueBlockNumbers = [...new Set(ordered.map((log) => log.blockNumber).filter((item): item is bigint => typeof item === "bigint"))];
-  const blocks = await Promise.all(
-    uniqueBlockNumbers.map(async (blockNumber) => ({
-      blockNumber,
-      block: await logsClient.getBlock({ blockNumber })
-    }))
-  );
-  const blockTimestampByNumber = new Map<bigint, bigint>(blocks.map(({ blockNumber, block }) => [blockNumber, block.timestamp]));
-
-  const voterState = new Map<WalletAddress, ProposalVoterView>();
-  for (const log of ordered) {
-    const args = log.args as Record<string, unknown>;
-    const voter = args.voter;
-    if (typeof voter !== "string") continue;
-    const updatedAt = typeof log.blockNumber === "bigint" ? (blockTimestampByNumber.get(log.blockNumber) ?? null) : null;
-    if (log.eventName === "VoteCast") {
-      const optionIndices = (args.optionIndices as readonly bigint[] | undefined) ?? [];
-      const weightsBps = (args.weightsBps as readonly bigint[] | undefined) ?? [];
-      voterState.set(voter as WalletAddress, {
-        voter: voter as WalletAddress,
-        optionIndices: optionIndices.map((item) => Number(item)),
-        weightsBps: weightsBps.map((item) => Number(item)),
-        weight: (args.totalWeight as bigint) ?? 0n,
-        updatedAt
-      });
-      continue;
-    }
-    const newOptionIndices = (args.optionIndices as readonly bigint[] | undefined) ?? [];
-    const newWeightsBps = (args.weightsBps as readonly bigint[] | undefined) ?? [];
-    voterState.set(voter as WalletAddress, {
-      voter: voter as WalletAddress,
-      optionIndices: newOptionIndices.map((item) => Number(item)),
-      weightsBps: newWeightsBps.map((item) => Number(item)),
-      weight: (args.newTotalWeight as bigint) ?? 0n,
-      updatedAt
-    });
+      abi: [getProposalVotersPageAbi],
+      functionName: "getProposalVotersPage",
+      args: [proposalId, offset, limit]
+    })) as WalletAddress[];
+    voters.push(...page);
   }
-  return [...voterState.values()].sort((a, b) => b.voter.localeCompare(a.voter));
+
+  const voterViews = await Promise.all(
+    voters.map(async (voter) => {
+      const receipt = (await client.readContract({
+        address,
+        abi: [getVoteReceiptAbi],
+        functionName: "getVoteReceipt",
+        args: [proposalId, voter]
+      })) as {
+        hasVoted: boolean;
+        optionIndices: readonly bigint[];
+        weightsBps: readonly bigint[];
+        weight: bigint;
+        updatedAt: bigint;
+      };
+      return {
+        voter,
+        optionIndices: receipt.optionIndices.map((item) => Number(item)),
+        weightsBps: receipt.weightsBps.map((item) => Number(item)),
+        weight: receipt.weight,
+        updatedAt: receipt.hasVoted ? receipt.updatedAt : null
+      } satisfies ProposalVoterView;
+    })
+  );
+
+  return voterViews.sort((a, b) => b.voter.localeCompare(a.voter));
 }
 
 export function paginateItems<T>(items: T[], page: number, pageSize: number): PagedResult<T> {

@@ -82,6 +82,10 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     mapping(uint256 => mapping(address => address[])) private _delegateInboundDelegators;
     mapping(uint256 => mapping(address => mapping(address => uint256))) private _delegateInboundIndexPlusOne;
     mapping(uint256 => mapping(address => address)) private _proposalWeightController;
+    uint256[] private _spaceIds;
+    mapping(uint256 => uint256[]) private _proposalIdsBySpace;
+    mapping(uint256 => address[]) private _proposalVoters;
+    mapping(uint256 => mapping(address => bool)) private _proposalVoterIndexed;
 
     event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name);
     event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed);
@@ -139,6 +143,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         s.name = name;
         s.description = description;
         _spaceProposers[spaceId][msg.sender] = true;
+        _spaceIds.push(spaceId);
 
         emit SpaceCreated(spaceId, msg.sender, token, name);
         return spaceId;
@@ -240,6 +245,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         for (uint256 i = 0; i < options.length; i++) {
             p.options.push(options[i]);
         }
+        _proposalIdsBySpace[spaceId].push(proposalId);
 
         emit ProposalCreated(proposalId, spaceId, msg.sender, startAt, endAt, allowMultipleChoices);
         return proposalId;
@@ -289,6 +295,10 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
             _assertProposalWeightControllersAvailable(proposalId, contributors, msg.sender);
             _setProposalWeightControllers(proposalId, contributors, msg.sender);
             _applyVoteToTallies(proposalId, optionIndices, distributedWeights);
+            if (!_proposalVoterIndexed[proposalId][msg.sender]) {
+                _proposalVoterIndexed[proposalId][msg.sender] = true;
+                _proposalVoters[proposalId].push(msg.sender);
+            }
             emit VoteCast(proposalId, msg.sender, optionIndices, weightsBps, distributedWeights, newWeight);
         }
 
@@ -386,10 +396,78 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         return s;
     }
 
+    function getSpaceIdsCount() external view returns (uint256) {
+        return _spaceIds.length;
+    }
+
+    function getSpaceIdsPage(uint256 offset, uint256 limit) external view returns (uint256[] memory) {
+        return _sliceUint256Array(_spaceIds, offset, limit);
+    }
+
     function getProposal(uint256 proposalId) external view returns (Proposal memory) {
         Proposal memory p = _proposals[proposalId];
         if (p.id == 0) revert ProposalNotFound();
         return p;
+    }
+
+    function getProposalIdsBySpaceCount(uint256 spaceId, bool includeDeleted) external view returns (uint256) {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        uint256[] storage ids = _proposalIdsBySpace[spaceId];
+        if (includeDeleted) {
+            return ids.length;
+        }
+        uint256 activeCount = 0;
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (!_proposals[ids[i]].deleted) {
+                activeCount += 1;
+            }
+        }
+        return activeCount;
+    }
+
+    function getProposalIdsBySpacePage(uint256 spaceId, uint256 offset, uint256 limit, bool includeDeleted)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        uint256[] storage ids = _proposalIdsBySpace[spaceId];
+        if (includeDeleted) {
+            return _sliceUint256Array(ids, offset, limit);
+        }
+
+        uint256 totalActive = 0;
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (!_proposals[ids[i]].deleted) {
+                totalActive += 1;
+            }
+        }
+        if (offset >= totalActive || limit == 0) {
+            return new uint256[](0);
+        }
+        uint256 maxItems = totalActive - offset;
+        if (maxItems > limit) {
+            maxItems = limit;
+        }
+
+        uint256[] memory page = new uint256[](maxItems);
+        uint256 skipped = 0;
+        uint256 filled = 0;
+        for (uint256 i = 0; i < ids.length && filled < maxItems; i++) {
+            uint256 proposalId = ids[i];
+            if (_proposals[proposalId].deleted) {
+                continue;
+            }
+            if (skipped < offset) {
+                skipped += 1;
+                continue;
+            }
+            page[filled] = proposalId;
+            filled += 1;
+        }
+        return page;
     }
 
     function getProposalTallies(uint256 proposalId)
@@ -412,6 +490,18 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         Proposal storage p = _proposals[proposalId];
         if (p.id == 0) revert ProposalNotFound();
         return _voteReceipts[proposalId][voter];
+    }
+
+    function getProposalVotersCount(uint256 proposalId) external view returns (uint256) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert ProposalNotFound();
+        return _proposalVoters[proposalId].length;
+    }
+
+    function getProposalVotersPage(uint256 proposalId, uint256 offset, uint256 limit) external view returns (address[] memory) {
+        Proposal storage p = _proposals[proposalId];
+        if (p.id == 0) revert ProposalNotFound();
+        return _sliceAddressArray(_proposalVoters[proposalId], offset, limit);
     }
 
     function getVotingPower(uint256 spaceId, address voter) external view returns (uint256) {
@@ -541,5 +631,43 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    uint256[45] private __gap;
+    function _sliceUint256Array(uint256[] storage source, uint256 offset, uint256 limit)
+        private
+        view
+        returns (uint256[] memory)
+    {
+        if (offset >= source.length || limit == 0) {
+            return new uint256[](0);
+        }
+        uint256 size = source.length - offset;
+        if (size > limit) {
+            size = limit;
+        }
+        uint256[] memory page = new uint256[](size);
+        for (uint256 i = 0; i < size; i++) {
+            page[i] = source[offset + i];
+        }
+        return page;
+    }
+
+    function _sliceAddressArray(address[] storage source, uint256 offset, uint256 limit)
+        private
+        view
+        returns (address[] memory)
+    {
+        if (offset >= source.length || limit == 0) {
+            return new address[](0);
+        }
+        uint256 size = source.length - offset;
+        if (size > limit) {
+            size = limit;
+        }
+        address[] memory page = new address[](size);
+        for (uint256 i = 0; i < size; i++) {
+            page[i] = source[offset + i];
+        }
+        return page;
+    }
+
+    uint256[41] private __gap;
 }

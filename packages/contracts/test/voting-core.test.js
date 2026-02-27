@@ -199,6 +199,60 @@ describe("VotingCore", function () {
     await expect(voting.connect(voter).vote(1, [0], [10000])).to.be.revertedWithCustomError(voting, "ProposalIsDeleted");
   });
 
+  it("supports on-chain pagination for spaces and proposals", async function () {
+    const { voting, spaceId, owner, token } = await loadFixture(deployFixture);
+    const now = await time.latest();
+    await (await voting.createSpace(await token.getAddress(), "Space 2", "Desc 2")).wait();
+    await (await voting.createSpace(await token.getAddress(), "Space 3", "Desc 3")).wait();
+
+    expect(await voting.getSpaceIdsCount()).to.equal(3);
+    expect(await voting.getSpaceIdsPage(0, 2)).to.deep.equal([1n, 2n]);
+    expect(await voting.getSpaceIdsPage(2, 5)).to.deep.equal([3n]);
+    expect(await voting.getSpaceIdsPage(9, 2)).to.deep.equal([]);
+
+    await (
+      await voting
+        .connect(owner)
+        .createProposal(spaceId, "P1", "D1", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+    await (
+      await voting
+        .connect(owner)
+        .createProposal(spaceId, "P2", "D2", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+    await (
+      await voting
+        .connect(owner)
+        .createProposal(spaceId, "P3", "D3", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+    await (await voting.connect(owner).deleteProposal(2)).wait();
+
+    expect(await voting.getProposalIdsBySpaceCount(spaceId, true)).to.equal(3);
+    expect(await voting.getProposalIdsBySpaceCount(spaceId, false)).to.equal(2);
+    expect(await voting.getProposalIdsBySpacePage(spaceId, 0, 5, true)).to.deep.equal([1n, 2n, 3n]);
+    expect(await voting.getProposalIdsBySpacePage(spaceId, 0, 5, false)).to.deep.equal([1n, 3n]);
+    expect(await voting.getProposalIdsBySpacePage(spaceId, 1, 5, false)).to.deep.equal([3n]);
+  });
+
+  it("indexes unique proposal voters for pagination", async function () {
+    const { voting, spaceId, owner, voter, other } = await loadFixture(deployFixture);
+    const now = await time.latest();
+    await (
+      await voting
+        .connect(owner)
+        .createProposal(spaceId, "P voters", "D", ["A", "B"], BigInt(now - 10), BigInt(now + 3600), false)
+    ).wait();
+
+    await (await voting.connect(voter).vote(1, [0], [10000])).wait();
+    await (await voting.connect(voter).vote(1, [1], [10000])).wait();
+    await (await voting.connect(other).vote(1, [0], [10000])).wait();
+
+    expect(await voting.getProposalVotersCount(1)).to.equal(2);
+    const page0 = await voting.getProposalVotersPage(1, 0, 1);
+    const page1 = await voting.getProposalVotersPage(1, 1, 1);
+    expect(new Set([...page0, ...page1])).to.deep.equal(new Set([voter.address, other.address]));
+  });
+
   it("retains state after UUPS upgrade", async function () {
     const { voting, spaceId, owner } = await loadFixture(deployFixture);
     const DelegateRegistry = await ethers.getContractFactory("DelegateRegistry");

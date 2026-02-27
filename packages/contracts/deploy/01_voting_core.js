@@ -54,6 +54,11 @@ module.exports = async function deployVotingCore(hre) {
   const { deployer } = await getNamedAccounts();
   const initialOwner = cfg.initialOwner || deployer;
   ensureSingleEoaControl(deployer, initialOwner);
+  const deploymentTxOpts = {
+    kind: "uups",
+    timeout: cfg.deploymentTimeoutMs,
+    pollingInterval: cfg.deploymentPollingIntervalMs
+  };
 
   const artifact = await artifacts.readArtifact("VotingCore");
   let proxyDeployment = await deployments.getOrNull(PROXY_DEPLOYMENT_NAME);
@@ -81,7 +86,7 @@ module.exports = async function deployVotingCore(hre) {
   const VotingCore = await ethers.getContractFactory("VotingCore");
 
   if (!proxyDeployment) {
-    const proxy = await upgrades.deployProxy(VotingCore, [initialOwner], { kind: "uups" });
+    const proxy = await upgrades.deployProxy(VotingCore, [initialOwner], deploymentTxOpts);
     await proxy.waitForDeployment();
     proxyAddress = await proxy.getAddress();
     implementationAddress = await upgrades.erc1967.getImplementationAddress(proxyAddress);
@@ -99,7 +104,7 @@ module.exports = async function deployVotingCore(hre) {
   } else {
     proxyAddress = proxyDeployment.address;
     const currentImplementation = await upgrades.erc1967.getImplementationAddress(proxyAddress);
-    const preparedImplementation = await upgrades.prepareUpgrade(proxyAddress, VotingCore, { kind: "uups" });
+    const preparedImplementation = await upgrades.prepareUpgrade(proxyAddress, VotingCore, deploymentTxOpts);
 
     if (preparedImplementation.toLowerCase() === currentImplementation.toLowerCase()) {
       implementationAddress = currentImplementation;
@@ -107,7 +112,7 @@ module.exports = async function deployVotingCore(hre) {
       log(`[${network.name}] VotingCore implementation is up to date, skipping upgrade.`);
     } else {
       await upgrades.validateUpgrade(proxyAddress, VotingCore, { kind: "uups" });
-      const upgraded = await upgrades.upgradeProxy(proxyAddress, VotingCore, { kind: "uups" });
+      const upgraded = await upgrades.upgradeProxy(proxyAddress, VotingCore, deploymentTxOpts);
       await upgraded.waitForDeployment();
       implementationAddress = await upgrades.erc1967.getImplementationAddress(proxyAddress);
       action = "upgraded";

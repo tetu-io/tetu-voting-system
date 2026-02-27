@@ -1,5 +1,5 @@
 {
-  "address": "0x549aE613Bb492CCf68A6620848C80262709a1fb4",
+  "address": "0x00379dD90b2A337C4652E286e4FBceadef940a21",
   "abi": [
     {
       "inputs": [
@@ -15,6 +15,26 @@
     {
       "inputs": [],
       "name": "AlreadyDeleted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DelegateRegistryNotSet",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DelegationIdAlreadySet",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DelegationIdNotSet",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "DelegationMismatch",
       "type": "error"
     },
     {
@@ -150,6 +170,35 @@
       "inputs": [],
       "name": "Unauthorized",
       "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "weightOwner",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "currentController",
+          "type": "address"
+        }
+      ],
+      "name": "WeightAlreadyClaimed",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegateRegistryAddress",
+          "type": "address"
+        }
+      ],
+      "name": "DelegateRegistryUpdated",
+      "type": "event"
     },
     {
       "anonymous": false,
@@ -312,6 +361,124 @@
         },
         {
           "indexed": true,
+          "internalType": "bytes32",
+          "name": "delegationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "delegate",
+          "type": "address"
+        }
+      ],
+      "name": "SpaceDelegateCleared",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "delegationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "delegate",
+          "type": "address"
+        }
+      ],
+      "name": "SpaceDelegateSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "delegationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "updater",
+          "type": "address"
+        }
+      ],
+      "name": "SpaceDelegationIdUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "delegationId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "delegator",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "delegate",
+          "type": "address"
+        }
+      ],
+      "name": "SpaceDelegationSynced",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
           "internalType": "address",
           "name": "account",
           "type": "address"
@@ -450,6 +617,19 @@
           "internalType": "uint256",
           "name": "spaceId",
           "type": "uint256"
+        }
+      ],
+      "name": "clearDelegateForSpace",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
         },
         {
           "internalType": "string",
@@ -520,6 +700,19 @@
         }
       ],
       "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "delegateRegistry",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
       "type": "function"
     },
     {
@@ -615,6 +808,64 @@
       "inputs": [
         {
           "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "includeDeleted",
+          "type": "bool"
+        }
+      ],
+      "name": "getProposalIdsBySpaceCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "includeDeleted",
+          "type": "bool"
+        }
+      ],
+      "name": "getProposalIdsBySpacePage",
+      "outputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "",
+          "type": "uint256[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
         }
@@ -630,6 +881,54 @@
           "internalType": "uint256[]",
           "name": "tallies",
           "type": "uint256[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getProposalVotersCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getProposalVotersPage",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
         }
       ],
       "stateMutability": "view",
@@ -671,11 +970,53 @@
               "internalType": "string",
               "name": "description",
               "type": "string"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "delegationId",
+              "type": "bytes32"
             }
           ],
           "internalType": "struct VotingCore.Space",
           "name": "",
           "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getSpaceIdsCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getSpaceIdsPage",
+      "outputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "",
+          "type": "uint256[]"
         }
       ],
       "stateMutability": "view",
@@ -727,11 +1068,40 @@
               "internalType": "uint16[]",
               "name": "weightsBps",
               "type": "uint16[]"
+            },
+            {
+              "internalType": "address[]",
+              "name": "contributors",
+              "type": "address[]"
             }
           ],
           "internalType": "struct VotingCore.VoteReceipt",
           "name": "",
           "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "voter",
+          "type": "address"
+        }
+      ],
+      "name": "getVotingPower",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
         }
       ],
       "stateMutability": "view",
@@ -863,6 +1233,37 @@
         },
         {
           "internalType": "address",
+          "name": "delegate",
+          "type": "address"
+        }
+      ],
+      "name": "setDelegateForSpace",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "registry",
+          "type": "address"
+        }
+      ],
+      "name": "setDelegateRegistry",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
           "name": "account",
           "type": "address"
         },
@@ -873,6 +1274,60 @@
         }
       ],
       "name": "setProposer",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "delegationId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "setSpaceDelegationId",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "delegator",
+          "type": "address"
+        }
+      ],
+      "name": "syncDelegationForSpace",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address[]",
+          "name": "delegators",
+          "type": "address[]"
+        }
+      ],
+      "name": "syncDelegationsForSpace",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -932,6 +1387,6 @@
       "type": "function"
     }
   ],
-  "transactionHash": "0x9a8304181da2a7db67c6eaa428c9838ce98c0bc194e75b9504ef09fb0be80a96",
+  "transactionHash": "0x9e9a89d2ed53472ae7118d7de104c4c17691710d06e6e412ca91eef2f310bf23",
   "numDeployments": 1
 }

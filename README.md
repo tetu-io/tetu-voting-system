@@ -45,7 +45,8 @@ Wallet network guard (web3 safety):
 - frontend is locked behind wallet connect in real mode (`VITE_USE_MOCK=false`): pages and contract reads open only after wallet connection;
 - when an injected wallet is connected to a chain different from `VITE_CHAIN_ID`, frontend blocks all write actions;
 - UI shows a warning with expected/current chain id and a `Switch Network` action;
-- contract event-log queries are fetched through `VITE_RPC_URL` (env RPC), while regular reads/writes use the active wallet client in real mode.
+- primary read model is on-chain pagination getters (spaces/proposals/voters) from `VotingCore`;
+- event logs are fallback/diagnostic timeline only (not required for core page state correctness).
 
 ## Install
 
@@ -103,6 +104,12 @@ Per-network settings live in YAML files:
 - `packages/contracts/deploy-config/polygon.yaml`
 - `packages/contracts/deploy-config/arbitrumSepolia.yaml`
 
+Useful per-network deploy knobs in these YAML files:
+
+- `confirmations` - tx confirmations to wait for where applicable.
+- `deploymentTimeoutMs` - timeout for OpenZeppelin upgrades deployment steps.
+- `deploymentPollingIntervalMs` - polling interval for deployment receipt checks.
+
 Run:
 
 ```bash
@@ -118,8 +125,9 @@ Required env keys for live networks:
 
 Optional:
 
-- `POLYGONSCAN_API_KEY`
-- `ARBISCAN_API_KEY`
+- `ETHERSCAN_API_KEY` (recommended; Etherscan API v2 single key for verify)
+- `POLYGONSCAN_API_KEY` (legacy fallback)
+- `ARBISCAN_API_KEY` (legacy fallback)
 
 Web:
 

@@ -35,7 +35,9 @@ web --> rpc
 rpc --> proxy[VotingCoreUUPSProxy]
 proxy --> impl[VotingCoreImplementation]
 impl --> token[ERC20Token]
-web --> events[EventLogs]
+web --> pagedViews["OnChainPagedViews"]
+pagedViews --> web
+web --> events[EventLogsFallback]
 events --> web
 ```
 
@@ -51,12 +53,13 @@ events --> web
 ## 5. Read Model
 
 - Storage views:
-  - canonical proposal metadata and current tallies.
+  - canonical proposal metadata and current tallies,
+  - enumerable ids for spaces/proposals/voters with pagination getters.
 - Event logs:
-  - append-only timeline for activity/history in UI.
+  - append-only timeline for activity/history fallback.
 - UI reconciliation strategy:
-  - render current state from views,
-  - enrich with events (who voted when, recast history).
+  - render page state from storage views/pagination,
+  - use events only when timeline diagnostics are required.
 
 ## 6. Upgrade Model
 

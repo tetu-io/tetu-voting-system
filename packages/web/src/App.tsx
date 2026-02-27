@@ -169,6 +169,41 @@ function unixToLocalDisplay(value: bigint | null): string {
   return new Date(Number(value) * 1000).toLocaleString();
 }
 
+function toLoggableError(error: unknown): unknown {
+  if (!error || typeof error !== "object") return error;
+
+  const value = error as {
+    name?: unknown;
+    message?: unknown;
+    shortMessage?: unknown;
+    details?: unknown;
+    reason?: unknown;
+    data?: unknown;
+    cause?: unknown;
+    metaMessages?: unknown;
+    stack?: unknown;
+  };
+
+  const base: Record<string, unknown> = {
+    name: value.name,
+    message: value.message,
+    shortMessage: value.shortMessage,
+    details: value.details,
+    reason: value.reason,
+    data: value.data,
+    metaMessages: value.metaMessages,
+    stack: value.stack
+  };
+
+  if (value.cause && typeof value.cause === "object") {
+    base.cause = toLoggableError(value.cause);
+  } else if (value.cause !== undefined) {
+    base.cause = value.cause;
+  }
+
+  return base;
+}
+
 function normalizeWeightsToBps(weights: number[]): number[] | null {
   const bpsDenominator = 10000;
   if (weights.length === 0) return null;
@@ -383,6 +418,13 @@ function useVotingRuntime(): RuntimeContext {
       setRefreshNonce((prev) => prev + 1);
       return { hash, logs: decodedLogs };
     } catch (error) {
+      console.error(`[tx:${action.functionName}] transaction failed`, {
+        contractAddress,
+        chainId: expectedChainId,
+        action,
+        normalizedMessage: normalizeError(error),
+        rawError: toLoggableError(error)
+      });
       setStatusMessage(normalizeError(error));
       return null;
     } finally {
@@ -695,27 +737,42 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
   const [token, setToken] = useState("0x0000000000000000000000000000000000000000");
   const [name, setName] = useState("New Space");
   const [description, setDescription] = useState("Created from frontend");
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingLog, setLoadingLog] = useState<string[]>([]);
 
   useEffect(() => {
-    async function run() {
-      if (useMock) {
-        setSpaces(runtime.mockService.listSpaces());
-        return;
-      }
-      setSpaces(await fetchRealSpaces(runtime.client, contractAddress, runtime.eventLogsClient));
-    }
-    void run();
-  }, [runtime]);
+    let cancelled = false;
+    const appendLoadingLog = (message: string) => {
+      if (cancelled) return;
+      setLoadingLog((prev) => [...prev, message]);
+    };
 
-  useEffect(() => {
     async function run() {
+      setIsLoading(true);
+      setLoadingLog(["Starting spaces load..."]);
       if (useMock) {
-        setSpaces(runtime.mockService.listSpaces());
+        appendLoadingLog("Loading spaces from mock service...");
+        const items = runtime.mockService.listSpaces();
+        if (!cancelled) setSpaces(items);
+        appendLoadingLog(`Spaces loaded (${items.length}).`);
+        if (!cancelled) setIsLoading(false);
         return;
       }
-      setSpaces(await fetchRealSpaces(runtime.client, contractAddress, runtime.eventLogsClient));
+      appendLoadingLog("Loading spaces from blockchain...");
+      try {
+        const items = await fetchRealSpaces(runtime.client, contractAddress, runtime.eventLogsClient);
+        if (!cancelled) setSpaces(items);
+        appendLoadingLog(`Spaces loaded (${items.length}).`);
+      } catch (error) {
+        appendLoadingLog(`Loading failed: ${normalizeError(error)}.`);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
     }
     void run();
+    return () => {
+      cancelled = true;
+    };
   }, [runtime.client, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
 
   useEffect(() => {
@@ -760,6 +817,34 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
       cancelled = true;
     };
   }, [spaces, runtime.client]);
+
+  if (isLoading) {
+    return (
+      <section className="page-stack">
+        <Card className="page-loader">
+          <div className="page-loader__spinner" aria-hidden="true" />
+          <h2 className="text__title3" style={{ margin: 0 }}>
+            Loading spaces
+          </h2>
+          <p className="text__paragraph muted" style={{ margin: 0 }}>
+            Waiting until all required data is loaded.
+          </p>
+          <div className="page-loader__log-wrap">
+            <p className="text__caption muted" style={{ margin: 0 }}>
+              Loading log
+            </p>
+            <ul className="page-loader__log" data-testid="spaces-loading-log">
+              {loadingLog.map((entry, idx) => (
+                <li key={`${idx}-${entry}`} className="text__caption">
+                  [{idx + 1}] {entry}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      </section>
+    );
+  }
 
   const paged = paginateItems(spaces, page, 10);
 

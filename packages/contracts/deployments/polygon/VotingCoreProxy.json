@@ -1,5 +1,5 @@
 {
-  "address": "0xF2AFB1A67a583b03c5f74568A974C927ABD9b636",
+  "address": "0xf645d6d8eC9A75CcfF2E9216E5770b7b254f3D09",
   "abi": [
     {
       "inputs": [
@@ -808,6 +808,64 @@
       "inputs": [
         {
           "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "includeDeleted",
+          "type": "bool"
+        }
+      ],
+      "name": "getProposalIdsBySpaceCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "includeDeleted",
+          "type": "bool"
+        }
+      ],
+      "name": "getProposalIdsBySpacePage",
+      "outputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "",
+          "type": "uint256[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
           "name": "proposalId",
           "type": "uint256"
         }
@@ -823,6 +881,54 @@
           "internalType": "uint256[]",
           "name": "tallies",
           "type": "uint256[]"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getProposalVotersCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "proposalId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getProposalVotersPage",
+      "outputs": [
+        {
+          "internalType": "address[]",
+          "name": "",
+          "type": "address[]"
         }
       ],
       "stateMutability": "view",
@@ -874,6 +980,43 @@
           "internalType": "struct VotingCore.Space",
           "name": "",
           "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getSpaceIdsCount",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "offset",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "limit",
+          "type": "uint256"
+        }
+      ],
+      "name": "getSpaceIdsPage",
+      "outputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "",
+          "type": "uint256[]"
         }
       ],
       "stateMutability": "view",
@@ -1244,6 +1387,6 @@
       "type": "function"
     }
   ],
-  "transactionHash": "0x8936e0ca5883e728acd40bfa485ea8d9c180487a5607aad2a138fe0c00685c1a",
+  "transactionHash": "0x1aa52a55356a808fe0487d1ad5a4ce70601f448f17e3f799cbfb4ec77334a207",
   "numDeployments": 1
 }

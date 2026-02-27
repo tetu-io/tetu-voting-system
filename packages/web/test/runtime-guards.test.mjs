@@ -29,6 +29,7 @@ function delegateIdTextToBytes32(value) {
 const wagmiSource = read("src/wagmi.ts");
 const mainSource = read("src/main.tsx");
 const appSource = read("src/App.tsx");
+const realViewsSource = read("src/services/realVotingViews.ts");
 
 // Guard against the exact regression that caused white screen:
 // createConfig(getDefaultConfig(...)) with invalid connector shape.
@@ -118,6 +119,34 @@ assert(
 assert(
   wagmiSource.includes("VITE_USE_MOCK"),
   "wagmi.ts must be aware of mock mode bootstrap."
+);
+assert(
+  realViewsSource.includes("getSpaceIdsPage"),
+  "realVotingViews.ts must use on-chain space pagination getters."
+);
+assert(
+  realViewsSource.includes("getProposalIdsBySpacePage"),
+  "realVotingViews.ts must use on-chain proposal pagination getters."
+);
+assert(
+  realViewsSource.includes("getProposalVotersPage"),
+  "realVotingViews.ts must use on-chain voters pagination getters."
+);
+assert(
+  !/export\s+async\s+function\s+fetchRealProposalVoters[\s\S]*?getLogs\(/m.test(realViewsSource),
+  "fetchRealProposalVoters must not depend on event log scans."
+);
+assert(
+  !/export\s+async\s+function\s+fetchRealProposalsBySpace[\s\S]*?getLogs\(/m.test(realViewsSource),
+  "fetchRealProposalsBySpace must not depend on event log scans."
+);
+assert(
+  !/export\s+async\s+function\s+fetchRealSpaces[\s\S]*?getLogs\(/m.test(realViewsSource),
+  "fetchRealSpaces must not depend on event log scans."
+);
+assert(
+  /export\s+async\s+function\s+fetchRealActivityLogs[\s\S]*?getLogs\(/m.test(realViewsSource),
+  "fetchRealActivityLogs must remain available as fallback diagnostic path."
 );
 assert(
   delegateIdTextToBytes32("tetubal.eth") === "0x7465747562616c2e657468000000000000000000000000000000000000000000",

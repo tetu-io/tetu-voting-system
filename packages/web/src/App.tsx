@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
+import { Contract, JsonRpcProvider } from "ethers";
 import { createPublicClient, createWalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { decodeEventLog, formatEther, http, parseAbiItem, type Hex, type PublicClient } from "viem";
@@ -78,15 +79,22 @@ const delegateRegistryAbi = [
 const readSpaceAbi = parseAbiItem(
   "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description, bytes32 delegationId))"
 );
+const spaceCreatedEventAbi = parseAbiItem(
+  "event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"
+);
 const readDelegateRegistryAbi = parseAbiItem("function delegateRegistry() view returns (address)");
-const readDelegationAbi = parseAbiItem("function delegation(address delegator, bytes32 id) view returns (address)");
 const erc20BalanceOfAbi = parseAbiItem("function balanceOf(address account) view returns (uint256)");
-const setDelegateEventAbi = parseAbiItem("event SetDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)");
-const clearDelegateEventAbi = parseAbiItem("event ClearDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)");
 const erc20SymbolStringAbi = parseAbiItem("function symbol() view returns (string)");
 const erc20SymbolBytes32Abi = parseAbiItem("function symbol() view returns (bytes32)");
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 const zeroBytes32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
+const delegateRegistryEthersAbi = [
+  "function delegation(address delegator, bytes32 id) view returns (address)",
+  "event SetDelegate(address indexed delegator, bytes32 indexed id, address delegate)",
+  "event ClearDelegate(address indexed delegator, bytes32 indexed id)",
+  "event ClearDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)"
+] as const;
+let cachedDelegateLogsProvider: JsonRpcProvider | null = null;
 
 type RuntimeContext = {
   client: PublicClient;
@@ -261,51 +269,96 @@ function normalizeWeightsToBps(weights: number[]): number[] | null {
 
 async function computeVotingPowerWithDelegations(params: {
   client: PublicClient;
-  logsClient: PublicClient;
   token: WalletAddress;
   voter: WalletAddress;
   delegateRegistry: WalletAddress;
   delegationId: `0x${string}`;
-}): Promise<bigint> {
-  const { client, logsClient, token, voter, delegateRegistry, delegationId } = params;
+  fromBlock?: bigint;
+}): Promise<{ votingPower: bigint; confirmedDelegators: WalletAddress[] }> {
+  const { client, token, voter, delegateRegistry, delegationId } = params;
+  const fromBlockNumber = Number(params.fromBlock ?? 0n);
   if (delegateRegistry.toLowerCase() === zeroAddress || delegationId.toLowerCase() === zeroBytes32) {
-    return 0n;
+    return { votingPower: 0n, confirmedDelegators: [] };
   }
 
-  const [setLogs, clearLogs, voterDelegate] = await Promise.all([
-    logsClient.getLogs({
-      address: delegateRegistry,
-      event: setDelegateEventAbi,
-      args: { id: delegationId, delegate: voter },
-      fromBlock: 0n,
-      toBlock: "latest"
-    }),
-    logsClient.getLogs({
-      address: delegateRegistry,
-      event: clearDelegateEventAbi,
-      args: { id: delegationId, delegate: voter },
-      fromBlock: 0n,
-      toBlock: "latest"
-    }),
-    client.readContract({
-      address: delegateRegistry,
-      abi: [readDelegationAbi],
-      functionName: "delegation",
-      args: [voter, delegationId]
-    })
+  if (!cachedDelegateLogsProvider) {
+    cachedDelegateLogsProvider = new JsonRpcProvider(eventLogsRpcUrl, expectedChainId);
+  }
+  const registry = new Contract(delegateRegistry, delegateRegistryEthersAbi, cachedDelegateLogsProvider);
+
+  async function queryFilterInChunks(
+    filter: unknown
+  ): Promise<Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }>> {
+    const latest = await cachedDelegateLogsProvider!.getBlockNumber();
+    const minSpan = 5_000;
+    const stack: Array<[number, number]> = [[fromBlockNumber, latest]];
+    const all: Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }> = [];
+
+    while (stack.length > 0) {
+      const [from, to] = stack.pop()!;
+      try {
+        const logs = (await registry.queryFilter(filter, from, to)) as Array<{
+          blockNumber: number;
+          index: number;
+          args: unknown[];
+          fragment: { name: string };
+        }>;
+        all.push(...logs);
+      } catch {
+        if (to - from <= minSpan) continue;
+        const mid = Math.floor((from + to) / 2);
+        stack.push([mid + 1, to], [from, mid]);
+      }
+    }
+    return all;
+  }
+
+  async function queryFilterResilient(
+    filter: unknown
+  ): Promise<Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }>> {
+    try {
+      return (await registry.queryFilter(filter, fromBlockNumber, "latest")) as Array<{
+        blockNumber: number;
+        index: number;
+        args: unknown[];
+        fragment: { name: string };
+      }>;
+    } catch {
+      return queryFilterInChunks(filter);
+    }
+  }
+
+  const setFilter = registry.filters.SetDelegate(null, delegationId);
+  const clearFilters: unknown[] = [];
+  try {
+    clearFilters.push(registry.filters["ClearDelegate(address,bytes32)"](null, delegationId));
+  } catch {
+    // Registry may not expose this overload.
+  }
+  try {
+    clearFilters.push(registry.filters["ClearDelegate(address,bytes32,address)"](null, delegationId, null));
+  } catch {
+    // Registry may not expose this overload.
+  }
+
+  const [setLogs, voterDelegate, clearLogsByFilter] = await Promise.all([
+    queryFilterResilient(setFilter),
+    registry.delegation(voter, delegationId) as Promise<string>,
+    Promise.all(clearFilters.map((filter) => queryFilterResilient(filter).catch(() => [])))
   ]);
+  const clearLogs = clearLogsByFilter.flat();
 
   const replay = [...setLogs, ...clearLogs].sort((a, b) => {
-    if ((a.blockNumber ?? 0n) !== (b.blockNumber ?? 0n)) {
-      return Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
+    if (a.blockNumber !== b.blockNumber) {
+      return a.blockNumber - b.blockNumber;
     }
-    return Number((a.logIndex ?? 0) - (b.logIndex ?? 0));
+    return (a.index ?? 0) - (b.index ?? 0);
   });
 
   const activeDelegators = new Set<string>();
   for (const log of replay) {
-    const delegator = log.args.delegator.toLowerCase();
-    if (log.eventName === "SetDelegate") {
+    const delegator = String(log.args[0]).toLowerCase();
+    if (log.fragment.name === "SetDelegate") {
       activeDelegators.add(delegator);
     } else {
       activeDelegators.delete(delegator);
@@ -315,12 +368,7 @@ async function computeVotingPowerWithDelegations(params: {
   const confirmedDelegators = (
     await Promise.all(
       [...activeDelegators].map(async (delegator) => {
-        const currentDelegate = await client.readContract({
-          address: delegateRegistry,
-          abi: [readDelegationAbi],
-          functionName: "delegation",
-          args: [delegator as WalletAddress, delegationId]
-        });
+        const currentDelegate = (await registry.delegation(delegator, delegationId)) as string;
         return currentDelegate.toLowerCase() === voter.toLowerCase() ? (delegator as WalletAddress) : null;
       })
     )
@@ -331,7 +379,7 @@ async function computeVotingPowerWithDelegations(params: {
     contributors.unshift(voter);
   }
   if (contributors.length === 0) {
-    return 0n;
+    return { votingPower: 0n, confirmedDelegators };
   }
 
   const balances = await Promise.all(
@@ -344,7 +392,10 @@ async function computeVotingPowerWithDelegations(params: {
       })
     )
   );
-  return balances.reduce((sum, balance) => sum + balance, 0n);
+  return {
+    votingPower: balances.reduce((sum, balance) => sum + balance, 0n),
+    confirmedDelegators
+  };
 }
 
 function useVotingRuntime(): RuntimeContext {
@@ -1566,98 +1617,208 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   const [tallies, setTallies] = useState<readonly [string[], bigint[]] | null>(null);
   const [voters, setVoters] = useState<ProposalVoterView[]>([]);
   const [votingPower, setVotingPower] = useState<bigint>(0n);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadingLog, setLoadingLog] = useState<string[]>([]);
   const [selectedOptions, setSelectedOptions] = useState<Record<number, boolean>>({});
   const [weightsInput, setWeightsInput] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (parsedProposalId === null) return;
+    let cancelled = false;
+    const appendLoadingLog = (message: string) => {
+      if (cancelled) return;
+      setLoadingLog((prev) => [...prev, message]);
+    };
+
     async function run() {
+      setIsLoading(true);
+      setLoadingLog([`Starting data load for proposal #${parsedProposalId.toString()}...`]);
       if (useMock) {
+        appendLoadingLog("Mock mode is enabled; reading proposal state from in-memory service.");
+        appendLoadingLog(`Loading proposal #${parsedProposalId.toString()} details from mock service...`);
         const mockProposal = runtime.mockService.getProposal(parsedProposalId);
-        setProposal(mockProposal);
+        if (!cancelled) setProposal(mockProposal);
+        appendLoadingLog(
+          mockProposal
+            ? `Proposal loaded (space #${mockProposal.spaceId.toString()}, options=${mockProposal.options.length}, deleted=${String(mockProposal.deleted)}).`
+            : "Proposal was not found in mock service."
+        );
+        appendLoadingLog(`Loading tallies for proposal #${parsedProposalId.toString()} from mock service...`);
         const mockTallies = runtime.mockService.getProposalTallies(parsedProposalId);
-        setTallies(mockTallies ? [mockTallies.options, mockTallies.tallies] : null);
-        setVoters(runtime.mockService.listVotersForProposal(parsedProposalId));
+        if (!cancelled) setTallies(mockTallies ? [mockTallies.options, mockTallies.tallies] : null);
+        appendLoadingLog(
+          mockTallies
+            ? `Tallies loaded (options=${mockTallies.options.length}, totalWeight=${mockTallies.tallies.reduce((sum, weight) => sum + weight, 0n).toString()}).`
+            : "Tallies are not available for this proposal in mock service."
+        );
+        appendLoadingLog(`Loading voters list for proposal #${parsedProposalId.toString()} from mock service...`);
+        const mockVoters = runtime.mockService.listVotersForProposal(parsedProposalId);
+        if (!cancelled) setVoters(mockVoters);
+        appendLoadingLog(`Voters list loaded (${mockVoters.length} voter records).`);
         if (mockProposal && runtime.effectiveAddress) {
-          setVotingPower(runtime.mockService.getVotingPower(mockProposal.spaceId, runtime.effectiveAddress));
+          appendLoadingLog(`Calculating voting power in mock service for ${runtime.effectiveAddress}...`);
+          const mockVotingPower = runtime.mockService.getVotingPower(mockProposal.spaceId, runtime.effectiveAddress);
+          if (!cancelled) setVotingPower(mockVotingPower);
+          appendLoadingLog(`Voting power loaded from mock service: ${mockVotingPower.toString()}.`);
         } else {
-          setVotingPower(0n);
+          if (!cancelled) setVotingPower(0n);
+          appendLoadingLog(mockProposal ? "Wallet is not connected; voting power is set to 0." : "Voting power skipped because proposal was not found.");
         }
+        appendLoadingLog("Proposal page data is ready (mock mode).");
+        if (!cancelled) setIsLoading(false);
         return;
       }
 
-      const [nextProposal, nextTallies, nextVoters] = await Promise.all([
-        runtime.client.readContract({
+      appendLoadingLog("Reading proposal details, tallies, and voter list from blockchain...");
+      try {
+        const proposalPromise = runtime.client.readContract({
           address: contractAddress,
           abi: votingAbi,
           functionName: "getProposal",
           args: [parsedProposalId]
-        }),
-        runtime.client.readContract({
+        }).then((loadedProposal) => {
+          appendLoadingLog(
+            `Proposal loaded (space #${loadedProposal.spaceId.toString()}, options=${loadedProposal.options.length}, deleted=${String(loadedProposal.deleted)}, totalVotesCast=${loadedProposal.totalVotesCast.toString()}).`
+          );
+          return loadedProposal;
+        });
+        const talliesPromise = runtime.client.readContract({
           address: contractAddress,
           abi: votingAbi,
           functionName: "getProposalTallies",
           args: [parsedProposalId]
-        }),
-        fetchRealProposalVoters(runtime.client, contractAddress, parsedProposalId, runtime.eventLogsClient)
-      ]);
-      const normalizedProposal: ProposalViewModel = {
-        id: nextProposal.id,
-        spaceId: nextProposal.spaceId,
-        author: nextProposal.author,
-        title: nextProposal.title,
-        description: nextProposal.description,
-        options: nextProposal.options,
-        startAt: nextProposal.startAt,
-        endAt: nextProposal.endAt,
-        deleted: nextProposal.deleted,
-        totalVotesCast: nextProposal.totalVotesCast,
-        allowMultipleChoices: nextProposal.allowMultipleChoices
-      };
-      setProposal(normalizedProposal);
-      setTallies([nextTallies[0], nextTallies[1]]);
-      setVoters(nextVoters);
-      if (runtime.effectiveAddress) {
-        const onchainPower = await runtime.client.readContract({
-          address: contractAddress,
-          abi: votingAbi,
-          functionName: "getVotingPower",
-          args: [normalizedProposal.spaceId, runtime.effectiveAddress]
+        }).then((loadedTallies) => {
+          const totalWeight = loadedTallies[1].reduce((sum, weight) => sum + weight, 0n);
+          appendLoadingLog(`Tallies loaded (options=${loadedTallies[0].length}, totalWeight=${totalWeight.toString()}).`);
+          return loadedTallies;
         });
-        try {
-          const [space, delegateRegistry] = await Promise.all([
-            runtime.client.readContract({
-              address: contractAddress,
-              abi: [readSpaceAbi],
-              functionName: "getSpace",
-              args: [normalizedProposal.spaceId]
-            }),
-            runtime.client.readContract({
-              address: contractAddress,
-              abi: [readDelegateRegistryAbi],
-              functionName: "delegateRegistry"
-            })
-          ]);
-          const delegatedPower = await computeVotingPowerWithDelegations({
-            client: runtime.client,
-            logsClient: runtime.eventLogsClient,
-            token: space.token as WalletAddress,
-            voter: runtime.effectiveAddress,
-            delegateRegistry: delegateRegistry as WalletAddress,
-            delegationId: space.delegationId as `0x${string}`
-          });
-          setVotingPower(delegatedPower > onchainPower ? delegatedPower : onchainPower);
-        } catch {
-          setVotingPower(onchainPower);
+        const votersPromise = fetchRealProposalVoters(runtime.client, contractAddress, parsedProposalId, runtime.eventLogsClient).then((loadedVoters) => {
+          appendLoadingLog(`Voters reconstructed from events (${loadedVoters.length} voter records).`);
+          return loadedVoters;
+        });
+        const [nextProposal, nextTallies, nextVoters] = await Promise.all([proposalPromise, talliesPromise, votersPromise]);
+        const normalizedProposal: ProposalViewModel = {
+          id: nextProposal.id,
+          spaceId: nextProposal.spaceId,
+          author: nextProposal.author,
+          title: nextProposal.title,
+          description: nextProposal.description,
+          options: nextProposal.options,
+          startAt: nextProposal.startAt,
+          endAt: nextProposal.endAt,
+          deleted: nextProposal.deleted,
+          totalVotesCast: nextProposal.totalVotesCast,
+          allowMultipleChoices: nextProposal.allowMultipleChoices
+        };
+        if (!cancelled) {
+          setProposal(normalizedProposal);
+          setTallies([nextTallies[0], nextTallies[1]]);
+          setVoters(nextVoters);
         }
-      } else {
-        setVotingPower(0n);
+
+        if (runtime.effectiveAddress) {
+          appendLoadingLog(`Wallet detected (${runtime.effectiveAddress}); loading voting power...`);
+          const onchainPower = await runtime.client.readContract({
+            address: contractAddress,
+            abi: votingAbi,
+            functionName: "getVotingPower",
+            args: [normalizedProposal.spaceId, runtime.effectiveAddress]
+          });
+          appendLoadingLog(`On-chain voting power loaded: ${onchainPower.toString()}.`);
+          try {
+            appendLoadingLog("Loading space token and delegate registry to compute delegated voting power...");
+            const [space, delegateRegistry, spaceCreatedLogs] = await Promise.all([
+              runtime.client.readContract({
+                address: contractAddress,
+                abi: [readSpaceAbi],
+                functionName: "getSpace",
+                args: [normalizedProposal.spaceId]
+              }),
+              runtime.client.readContract({
+                address: contractAddress,
+                abi: [readDelegateRegistryAbi],
+                functionName: "delegateRegistry"
+              }),
+              runtime.eventLogsClient.getLogs({
+                address: contractAddress,
+                event: spaceCreatedEventAbi,
+                args: { spaceId: normalizedProposal.spaceId },
+                fromBlock: 0n,
+                toBlock: "latest"
+              })
+            ]);
+            appendLoadingLog(
+              `Delegation context loaded (token=${String(space.token)}, delegationId=${String(space.delegationId)}, registry=${String(delegateRegistry)}).`
+            );
+            const { votingPower: delegatedPower } = await computeVotingPowerWithDelegations({
+              client: runtime.client,
+              token: space.token as WalletAddress,
+              voter: runtime.effectiveAddress,
+              delegateRegistry: delegateRegistry as WalletAddress,
+              delegationId: space.delegationId as `0x${string}`,
+              fromBlock: spaceCreatedLogs[0]?.blockNumber ?? 0n
+            });
+            const finalPower = delegatedPower > onchainPower ? delegatedPower : onchainPower;
+            if (!cancelled) setVotingPower(finalPower);
+            appendLoadingLog(
+              `Delegated voting power computed: ${delegatedPower.toString()}; effective voting power selected: ${finalPower.toString()}.`
+            );
+          } catch (error) {
+            if (!cancelled) setVotingPower(onchainPower);
+            appendLoadingLog(`Delegation-aware voting power fallback to on-chain value due to error: ${normalizeError(error)}.`);
+          }
+        } else {
+          if (!cancelled) setVotingPower(0n);
+          appendLoadingLog("Wallet is not connected; voting power is set to 0.");
+        }
+        appendLoadingLog("Proposal page data is ready.");
+      } catch (error) {
+        appendLoadingLog(`Loading failed: ${normalizeError(error)}.`);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     }
     void run();
+    return () => {
+      cancelled = true;
+    };
   }, [parsedProposalId, runtime.client, runtime.eventLogsClient, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce]);
 
   if (parsedProposalId === null) return <p>Invalid proposal id</p>;
+  if (isLoading) {
+    return (
+      <section className="page-stack">
+        <PageNavigation
+          backTo="/"
+          breadcrumbs={[
+            { label: "Spaces", to: "/" },
+            { label: `Proposal #${parsedProposalId.toString()}` }
+          ]}
+        />
+        <Card className="page-loader">
+          <div className="page-loader__spinner" aria-hidden="true" />
+          <h2 className="text__title3" style={{ margin: 0 }}>
+            Loading proposal #{parsedProposalId.toString()}
+          </h2>
+          <p className="text__paragraph muted" style={{ margin: 0 }}>
+            Waiting until all required data is loaded.
+          </p>
+          <div className="page-loader__log-wrap">
+            <p className="text__caption muted" style={{ margin: 0 }}>
+              Loading log
+            </p>
+            <ul className="page-loader__log" data-testid="proposal-loading-log">
+              {loadingLog.map((entry, idx) => (
+                <li key={`${idx}-${entry}`} className="text__caption">
+                  [{idx + 1}] {entry}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Card>
+      </section>
+    );
+  }
   if (!proposal || !tallies) {
     return (
       <section className="page-stack">
@@ -1680,9 +1841,43 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   const now = BigInt(Math.floor(Date.now() / 1000));
   const proposalStatus = proposal.deleted ? "deleted" : now >= proposal.endAt ? "ended" : "active";
   const canVote = runtime.effectiveConnected && !runtime.isWrongNetwork && votingPower > 0n && proposalStatus === "active";
+  const isProposalAuthor =
+    runtime.effectiveConnected &&
+    runtime.effectiveAddress !== null &&
+    proposal.author.toLowerCase() === runtime.effectiveAddress.toLowerCase();
+  const canDeleteProposal = isProposalAuthor && proposalStatus !== "deleted";
   const totalTallyWeight = tallies[1].reduce((sum, weight) => sum + weight, 0n);
 
   async function voteSingle(optionIndex: number) {
+    if (runtime.effectiveAddress) {
+      try {
+        const [space, delegateRegistry] = await Promise.all([
+          runtime.client.readContract({
+            address: contractAddress,
+            abi: [readSpaceAbi],
+            functionName: "getSpace",
+            args: [proposal.spaceId]
+          }),
+          runtime.client.readContract({
+            address: contractAddress,
+            abi: [readDelegateRegistryAbi],
+            functionName: "delegateRegistry"
+          })
+        ]);
+        const { confirmedDelegators } = await computeVotingPowerWithDelegations({
+          client: runtime.client,
+          token: space.token as WalletAddress,
+          voter: runtime.effectiveAddress,
+          delegateRegistry: delegateRegistry as WalletAddress,
+          delegationId: space.delegationId as `0x${string}`
+        });
+        if (confirmedDelegators.length > 0) {
+          await runtime.executeAction({ functionName: "syncDelegationsForSpace", args: [proposal.spaceId, confirmedDelegators] });
+        }
+      } catch {
+        // Ignore sync preflight errors and still allow vote transaction.
+      }
+    }
     await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, [optionIndex], [10000]] });
   }
 
@@ -1706,10 +1901,43 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
     const rawWeights = optionIndices.map((idx) => Number(weightsInput[idx] ?? ""));
     const weightsBps = normalizeWeightsToBps(rawWeights);
     if (!weightsBps) return;
+    if (runtime.effectiveAddress) {
+      try {
+        const [space, delegateRegistry] = await Promise.all([
+          runtime.client.readContract({
+            address: contractAddress,
+            abi: [readSpaceAbi],
+            functionName: "getSpace",
+            args: [proposal.spaceId]
+          }),
+          runtime.client.readContract({
+            address: contractAddress,
+            abi: [readDelegateRegistryAbi],
+            functionName: "delegateRegistry"
+          })
+        ]);
+        const { confirmedDelegators } = await computeVotingPowerWithDelegations({
+          client: runtime.client,
+          token: space.token as WalletAddress,
+          voter: runtime.effectiveAddress,
+          delegateRegistry: delegateRegistry as WalletAddress,
+          delegationId: space.delegationId as `0x${string}`
+        });
+        if (confirmedDelegators.length > 0) {
+          await runtime.executeAction({ functionName: "syncDelegationsForSpace", args: [proposal.spaceId, confirmedDelegators] });
+        }
+      } catch {
+        // Ignore sync preflight errors and still allow vote transaction.
+      }
+    }
     const result = await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, optionIndices, weightsBps] });
     if (!result) return;
     setSelectedOptions({});
     setWeightsInput({});
+  }
+
+  async function deleteCurrentProposal() {
+    await runtime.executeAction({ functionName: "deleteProposal", args: [parsedProposalId] });
   }
 
   return (
@@ -1734,6 +1962,18 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
           </strong>
         </p>
         <p className="text__paragraph">Your voting power: {formatEther(votingPower)} tokens</p>
+        {canDeleteProposal && (
+          <div className="row">
+            <Button
+              data-testid="delete-proposal-btn"
+              variant="error"
+              onClick={deleteCurrentProposal}
+              disabled={runtime.txPending || runtime.isWrongNetwork}
+            >
+              {runtime.txPending ? "Deleting..." : "Delete Proposal"}
+            </Button>
+          </div>
+        )}
       </Card>
 
       <Card surface="dark" className="stack-3">

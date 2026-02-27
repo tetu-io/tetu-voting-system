@@ -57,6 +57,11 @@ test("frontend pages flow in mock mode", async ({ page }) => {
   await page.getByTestId("vote-option-weight-1").fill("3");
   await page.getByTestId("vote-multi-submit").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: vote");
+  await expect(page.getByTestId("delete-proposal-btn")).toBeVisible();
+  await page.getByTestId("delete-proposal-btn").click();
+  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: deleteProposal");
+  await expect(page.getByText("Status:")).toBeVisible();
+  await expect(page.getByText("deleted")).toBeVisible();
 
   const proposalBreadcrumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
   await expect(proposalBreadcrumbs).toContainText("Proposal #");

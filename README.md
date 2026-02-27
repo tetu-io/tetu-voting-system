@@ -148,3 +148,11 @@ npm run build
 npm run lint
 npm run test
 ```
+
+## Additional docs
+
+- `docs/ARCHITECTURE.md`
+- `docs/CONTRACTS.md`
+- `docs/TESTING.md`
+- `docs/TECH_SPEC.md`
+- `docs/SECURITY_AUDIT.md`

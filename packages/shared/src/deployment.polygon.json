@@ -1,0 +1,9 @@
+{
+  "chainId": 137,
+  "network": "polygon",
+  "deployer": "0xbbbbb8C4364eC2ce52c59D2Ed3E56F307E529a94",
+  "owner": "0xbbbbb8C4364eC2ce52c59D2Ed3E56F307E529a94",
+  "votingCore": "0xF2AFB1A67a583b03c5f74568A974C927ABD9b636",
+  "implementation": "0x30F18f047BDC91d714e72cc6BD6954eE2ae3Aa46",
+  "delegateRegistry": "0x469788fE6E9E9681C6ebF3bF78e7Fd26Fc015446"
+}

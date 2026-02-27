@@ -3,7 +3,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { createPublicClient, createWalletClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { decodeEventLog, formatEther, http, type Hex, type PublicClient } from "viem";
+import { decodeEventLog, formatEther, http, parseAbiItem, type Hex, type PublicClient } from "viem";
 import { useAccount, useChainId, useDisconnect, usePublicClient, useSwitchChain, useWriteContract } from "wagmi";
 import { votingAbi } from "./abi";
 import logo from "./assets/images/logo.svg";
@@ -69,6 +69,8 @@ const delegateRegistryAbi = [
     outputs: []
   }
 ] as const;
+const erc20SymbolStringAbi = parseAbiItem("function symbol() view returns (string)");
+const erc20SymbolBytes32Abi = parseAbiItem("function symbol() view returns (bytes32)");
 
 type RuntimeContext = {
   client: PublicClient;
@@ -636,6 +638,7 @@ function PageNavigation({ backTo, breadcrumbs }: { backTo: string; breadcrumbs: 
 function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
   const navigate = useNavigate();
   const [spaces, setSpaces] = useState<SpaceView[]>([]);
+  const [tokenSymbols, setTokenSymbols] = useState<Record<string, string>>({});
   const [page, setPage] = useState(1);
   const [openCreate, setOpenCreate] = useState(false);
   const [token, setToken] = useState("0x0000000000000000000000000000000000000000");
@@ -663,6 +666,49 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
     }
     void run();
   }, [runtime.client, runtime.mockService, runtime.refreshNonce]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      const tokens = [...new Set(spaces.map((space) => space.token.toLowerCase()))] as WalletAddress[];
+      if (tokens.length === 0) {
+        setTokenSymbols({});
+        return;
+      }
+      const entries = await Promise.all(
+        tokens.map(async (tokenAddress) => {
+          try {
+            const symbol = await runtime.client.readContract({
+              address: tokenAddress,
+              abi: [erc20SymbolStringAbi],
+              functionName: "symbol"
+            });
+            const cleanSymbol = symbol.trim();
+            return [tokenAddress, cleanSymbol.length > 0 ? cleanSymbol : shortAddress(tokenAddress)] as const;
+          } catch {
+            try {
+              const symbolBytes = await runtime.client.readContract({
+                address: tokenAddress,
+                abi: [erc20SymbolBytes32Abi],
+                functionName: "symbol"
+              });
+              const readable = bytes32ToReadableText(symbolBytes);
+              return [tokenAddress, readable ?? shortAddress(tokenAddress)] as const;
+            } catch {
+              return [tokenAddress, shortAddress(tokenAddress)] as const;
+            }
+          }
+        })
+      );
+      if (!cancelled) {
+        setTokenSymbols(Object.fromEntries(entries));
+      }
+    }
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [spaces, runtime.client]);
 
   const paged = paginateItems(spaces, page, 10);
 
@@ -706,7 +752,7 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
                   <td>{space.id.toString()}</td>
                   <td>{space.name}</td>
                   <td>{shortAddress(space.owner)}</td>
-                  <td>{shortAddress(space.token)}</td>
+                  <td>{tokenSymbols[space.token.toLowerCase()] ?? shortAddress(space.token)}</td>
                 </tr>
               ))}
               {paged.items.length === 0 && (

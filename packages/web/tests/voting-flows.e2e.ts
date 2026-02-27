@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, createWalletClient, defineChain, http } from "viem";
+import { createPublicClient, createWalletClient, defineChain, http, parseAbiItem } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { votingAbi } from "../src/abi";
 
@@ -78,6 +78,16 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   const createdSpaceIdText = page.url().split("/").at(-1) ?? "0";
   const createdSpaceId = BigInt(createdSpaceIdText);
   expect(createdSpaceId).toBeGreaterThan(0n);
+  const tokenSymbol = await rpc.readContract({
+    address: deployment.token,
+    abi: [parseAbiItem("function symbol() view returns (string)")],
+    functionName: "symbol"
+  });
+  await page.goto("/");
+  const createdSpaceRow = page.locator("tbody tr").filter({ has: page.getByRole("cell", { name: "E2E New Space" }) }).first();
+  await expect(createdSpaceRow).toContainText(tokenSymbol);
+  await createdSpaceRow.click();
+  await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}$`));
 
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceIdText}/settings$`));

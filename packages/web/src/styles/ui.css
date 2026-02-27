@@ -335,11 +335,18 @@
   pointer-events: auto;
   padding-right: calc(var(--grid-step) * 8);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-height: min(70vh, 560px);
+  overflow: hidden;
 }
 
 .app-toast__body {
   display: grid;
   gap: calc(var(--grid-step) * 2);
+  max-height: calc(min(70vh, 560px) - (var(--grid-step) * 3));
+  overflow: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  padding-right: calc(var(--grid-step) * 1);
 }
 
 .app-toast__close {

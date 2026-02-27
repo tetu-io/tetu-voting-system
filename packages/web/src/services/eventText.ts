@@ -36,6 +36,9 @@ export function mapEventToText(log: EventLikeLog): string | null {
 export function normalizeError(error: unknown): string {
   const raw = String(error);
   if (raw.includes("User rejected")) return "User rejected transaction";
+  if (raw.includes("TransactionReceiptNotFoundError")) {
+    return "Transaction is sent but confirmation is delayed. Please wait a bit longer and retry refresh.";
+  }
   if (raw.includes("ProposalEnded")) return "Proposal ended";
   if (raw.includes("ProposalNotStarted")) return "Proposal not started";
   if (raw.includes("ProposalIsDeleted")) return "Proposal deleted";

@@ -78,8 +78,15 @@ const delegateRegistryAbi = [
 const readSpaceAbi = parseAbiItem(
   "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description, bytes32 delegationId))"
 );
+const readDelegateRegistryAbi = parseAbiItem("function delegateRegistry() view returns (address)");
+const readDelegationAbi = parseAbiItem("function delegation(address delegator, bytes32 id) view returns (address)");
+const erc20BalanceOfAbi = parseAbiItem("function balanceOf(address account) view returns (uint256)");
+const setDelegateEventAbi = parseAbiItem("event SetDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)");
+const clearDelegateEventAbi = parseAbiItem("event ClearDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)");
 const erc20SymbolStringAbi = parseAbiItem("function symbol() view returns (string)");
 const erc20SymbolBytes32Abi = parseAbiItem("function symbol() view returns (bytes32)");
+const zeroAddress = "0x0000000000000000000000000000000000000000";
+const zeroBytes32 = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
 type RuntimeContext = {
   client: PublicClient;
@@ -204,6 +211,17 @@ function toLoggableError(error: unknown): unknown {
   return base;
 }
 
+function isReceiptPendingError(error: unknown): boolean {
+  const text = String(error).toLowerCase();
+  return text.includes("transactionreceiptnotfounderror") || text.includes("transaction receipt") && text.includes("could not be found");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function normalizeWeightsToBps(weights: number[]): number[] | null {
   const bpsDenominator = 10000;
   if (weights.length === 0) return null;
@@ -239,6 +257,94 @@ function normalizeWeightsToBps(weights: number[]): number[] | null {
 
   const normalized = [...byLargestRemainder].sort((a, b) => a.idx - b.idx).map((item) => item.base);
   return normalized.every((item) => item > 0) ? normalized : null;
+}
+
+async function computeVotingPowerWithDelegations(params: {
+  client: PublicClient;
+  logsClient: PublicClient;
+  token: WalletAddress;
+  voter: WalletAddress;
+  delegateRegistry: WalletAddress;
+  delegationId: `0x${string}`;
+}): Promise<bigint> {
+  const { client, logsClient, token, voter, delegateRegistry, delegationId } = params;
+  if (delegateRegistry.toLowerCase() === zeroAddress || delegationId.toLowerCase() === zeroBytes32) {
+    return 0n;
+  }
+
+  const [setLogs, clearLogs, voterDelegate] = await Promise.all([
+    logsClient.getLogs({
+      address: delegateRegistry,
+      event: setDelegateEventAbi,
+      args: { id: delegationId, delegate: voter },
+      fromBlock: 0n,
+      toBlock: "latest"
+    }),
+    logsClient.getLogs({
+      address: delegateRegistry,
+      event: clearDelegateEventAbi,
+      args: { id: delegationId, delegate: voter },
+      fromBlock: 0n,
+      toBlock: "latest"
+    }),
+    client.readContract({
+      address: delegateRegistry,
+      abi: [readDelegationAbi],
+      functionName: "delegation",
+      args: [voter, delegationId]
+    })
+  ]);
+
+  const replay = [...setLogs, ...clearLogs].sort((a, b) => {
+    if ((a.blockNumber ?? 0n) !== (b.blockNumber ?? 0n)) {
+      return Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
+    }
+    return Number((a.logIndex ?? 0) - (b.logIndex ?? 0));
+  });
+
+  const activeDelegators = new Set<string>();
+  for (const log of replay) {
+    const delegator = log.args.delegator.toLowerCase();
+    if (log.eventName === "SetDelegate") {
+      activeDelegators.add(delegator);
+    } else {
+      activeDelegators.delete(delegator);
+    }
+  }
+
+  const confirmedDelegators = (
+    await Promise.all(
+      [...activeDelegators].map(async (delegator) => {
+        const currentDelegate = await client.readContract({
+          address: delegateRegistry,
+          abi: [readDelegationAbi],
+          functionName: "delegation",
+          args: [delegator as WalletAddress, delegationId]
+        });
+        return currentDelegate.toLowerCase() === voter.toLowerCase() ? (delegator as WalletAddress) : null;
+      })
+    )
+  ).filter((delegator): delegator is WalletAddress => delegator !== null);
+
+  const contributors: WalletAddress[] = [...confirmedDelegators];
+  if (voterDelegate.toLowerCase() === zeroAddress) {
+    contributors.unshift(voter);
+  }
+  if (contributors.length === 0) {
+    return 0n;
+  }
+
+  const balances = await Promise.all(
+    contributors.map((account) =>
+      client.readContract({
+        address: token,
+        abi: [erc20BalanceOfAbi],
+        functionName: "balanceOf",
+        args: [account]
+      })
+    )
+  );
+  return balances.reduce((sum, balance) => sum + balance, 0n);
 }
 
 function useVotingRuntime(): RuntimeContext {
@@ -316,6 +422,27 @@ function useVotingRuntime(): RuntimeContext {
     setStatusMessage(`Confirm "${action.functionName}" transaction in wallet...`);
     setTxHash(null);
     setTxPending(true);
+    const waitForReceipt = async (hash: Hex, step: "main" | "registry") => {
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          return await client.waitForTransactionReceipt({
+            hash,
+            pollingInterval: 1_500,
+            timeout: 360_000
+          });
+        } catch (error) {
+          if (!isReceiptPendingError(error) || attempt >= maxAttempts) throw error;
+          const retryInMs = attempt * 4_000;
+          const suffix = step === "registry" ? " (delegate registry)" : "";
+          setStatusMessage(
+            `Tx sent${suffix}. Waiting for confirmation... retry ${attempt}/${maxAttempts - 1}, next check in ${Math.round(retryInMs / 1000)}s.`
+          );
+          await sleep(retryInMs);
+        }
+      }
+      throw new Error("Transaction receipt is unavailable after multiple retries");
+    };
     try {
       if (useMock) {
         setStatusMessage(`Submitting "${action.functionName}"...`);
@@ -378,7 +505,7 @@ function useVotingRuntime(): RuntimeContext {
                   args: [space.delegationId],
                   chainId: expectedChainId
                 });
-        const registryReceipt = await client.waitForTransactionReceipt({ hash: registryHash });
+        const registryReceipt = await waitForReceipt(registryHash, "registry");
         if (registryReceipt.status !== "success") {
           throw new Error(`Transaction reverted: ${action.functionName} (registry)`);
         }
@@ -401,7 +528,7 @@ function useVotingRuntime(): RuntimeContext {
 
       setTxHash(hash);
       setStatusMessage(`Tx sent. Waiting for confirmation of "${action.functionName}"...`);
-      const receipt = await client.waitForTransactionReceipt({ hash });
+      const receipt = await waitForReceipt(hash, "main");
       if (receipt.status !== "success") {
         throw new Error(`Transaction reverted: ${action.functionName}`);
       }
@@ -1491,13 +1618,38 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
       setTallies([nextTallies[0], nextTallies[1]]);
       setVoters(nextVoters);
       if (runtime.effectiveAddress) {
-        const power = await runtime.client.readContract({
+        const onchainPower = await runtime.client.readContract({
           address: contractAddress,
           abi: votingAbi,
           functionName: "getVotingPower",
           args: [normalizedProposal.spaceId, runtime.effectiveAddress]
         });
-        setVotingPower(power);
+        try {
+          const [space, delegateRegistry] = await Promise.all([
+            runtime.client.readContract({
+              address: contractAddress,
+              abi: [readSpaceAbi],
+              functionName: "getSpace",
+              args: [normalizedProposal.spaceId]
+            }),
+            runtime.client.readContract({
+              address: contractAddress,
+              abi: [readDelegateRegistryAbi],
+              functionName: "delegateRegistry"
+            })
+          ]);
+          const delegatedPower = await computeVotingPowerWithDelegations({
+            client: runtime.client,
+            logsClient: runtime.eventLogsClient,
+            token: space.token as WalletAddress,
+            voter: runtime.effectiveAddress,
+            delegateRegistry: delegateRegistry as WalletAddress,
+            delegationId: space.delegationId as `0x${string}`
+          });
+          setVotingPower(delegatedPower > onchainPower ? delegatedPower : onchainPower);
+        } catch {
+          setVotingPower(onchainPower);
+        }
       } else {
         setVotingPower(0n);
       }

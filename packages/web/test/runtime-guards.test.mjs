@@ -42,8 +42,12 @@ assert(
   "wagmi.ts must configure connectors via RainbowKit connectorsForWallets."
 );
 assert(
-  wagmiSource.includes("rainbowWallet"),
-  "wagmi.ts must configure Rainbow wallet connector."
+  wagmiSource.includes("metaMaskWallet"),
+  "wagmi.ts must configure MetaMask wallet connector."
+);
+assert(
+  wagmiSource.includes("rabbyWallet"),
+  "wagmi.ts must configure Rabby wallet connector."
 );
 assert(
   wagmiSource.includes("walletConnectWallet"),

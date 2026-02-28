@@ -1,5 +1,9 @@
 import { connectorsForWallets } from "@rainbow-me/rainbowkit";
-import { rainbowWallet, walletConnectWallet } from "@rainbow-me/rainbowkit/wallets";
+import {
+  metaMaskWallet,
+  rabbyWallet,
+  walletConnectWallet
+} from "@rainbow-me/rainbowkit/wallets";
 import { createConfig, http } from "wagmi";
 import { getConfiguredChain } from "./config/chain";
 
@@ -16,14 +20,12 @@ const connectors = walletConnectProjectId
   ? connectorsForWallets(
       [
         {
-          groupName: "Recommended",
-          wallets: [
-            rainbowWallet({ projectId: walletConnectProjectId, chains: [configuredChain] }),
-            walletConnectWallet({ projectId: walletConnectProjectId, chains: [configuredChain] })
-          ]
+          groupName: "Popular",
+          wallets: [metaMaskWallet, rabbyWallet, walletConnectWallet]
         }
       ],
       {
+        projectId: walletConnectProjectId,
         appName: "Tetu Voting",
         appDescription: "Tetu voting frontend"
       }

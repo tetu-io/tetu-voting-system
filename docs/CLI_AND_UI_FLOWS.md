@@ -69,12 +69,17 @@ UI has two modes:
 - If `now >= endAt`, vote button is disabled in UI.
 - Any forced submit attempt should still fail on-chain with `ProposalEnded`.
 
-## 2. CLI Flows
+## 2. Contract Script Flows
+
+Scripts are executed via `packages/contracts/scripts/voting-cli.js`.
+
+Environment:
+- `SCRIPT_RPC_URL` (or `CLI_RPC_URL`)
+- `SCRIPT_PRIVATE_KEY` (or `DEPLOYER_PRIVATE_KEY`)
+- `CLI_CONTRACT` (or pass `--contract`)
 
 ## 2.1 `proposal:create`
 Inputs:
-- `--rpc-url`
-- `--private-key`
 - `--contract`
 - `--space-id`
 - `--title`
@@ -91,8 +96,6 @@ Output:
 
 ## 2.2 `vote:cast`
 Inputs:
-- `--rpc-url`
-- `--private-key`
 - `--contract`
 - `--proposal-id`
 - `--option`
@@ -105,7 +108,6 @@ Output:
 
 ## 2.3 `results:read`
 Inputs:
-- `--rpc-url`
 - `--contract`
 - `--proposal-id`
 
@@ -113,6 +115,22 @@ Output:
 - proposal metadata,
 - options and tallies,
 - vote status (active/ended/deleted),
+- optional JSON with `--json`.
+
+## 2.4 `delegation:sync`
+Inputs:
+- `--space-id`
+- `--days` (required, sync window size in days)
+- `--fetch-batch-size` (optional, default `1000`)
+- `--sync-batch-size` (optional, default `100`)
+- `--skip-checkpoint` (optional)
+- `--verbose` (optional, live progress logs to stderr)
+
+Output:
+- found/outdated/synced delegation counters,
+- block range,
+- checkpoint update status,
+- checkpoint skips for non-monotonic historical months,
 - optional JSON with `--json`.
 
 ## 3. UX and Error Handling Rules

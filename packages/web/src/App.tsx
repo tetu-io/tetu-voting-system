@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { BrowserRouter, Link, Route, Routes, useNavigate, useParams } from "react-router-dom";
 import { Contract, JsonRpcProvider } from "ethers";
@@ -50,6 +50,7 @@ const rpcUrl = useInternalRpc ? (import.meta.env.VITE_RPC_URL ?? "http://127.0.0
 const configuredChain = getConfiguredChain(expectedChainId, rpcUrl);
 const expectedChainName = configuredChain.name;
 const blockTimeSeconds = Number(import.meta.env.VITE_BLOCK_TIME_SECONDS ?? 12);
+const postTxLockBlocks = 10n;
 const rpcTimeoutMs = 600_000;
 const staticPublicClient = rpcUrl
   ? createPublicClient({
@@ -79,11 +80,6 @@ const delegateRegistryAbi = [
 const readSpaceAbi = parseAbiItem(
   "function getSpace(uint256 spaceId) view returns ((uint256 id, address token, address owner, string name, string description, bytes32 delegationId))"
 );
-const spaceCreatedEventAbi = parseAbiItem(
-  "event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"
-);
-const readDelegateRegistryAbi = parseAbiItem("function delegateRegistry() view returns (address)");
-const erc20BalanceOfAbi = parseAbiItem("function balanceOf(address account) view returns (uint256)");
 const erc20SymbolStringAbi = parseAbiItem("function symbol() view returns (string)");
 const erc20SymbolBytes32Abi = parseAbiItem("function symbol() view returns (bytes32)");
 const zeroAddress = "0x0000000000000000000000000000000000000000";
@@ -94,6 +90,7 @@ const delegateRegistryEthersAbi = [
   "event ClearDelegate(address indexed delegator, bytes32 indexed id)",
   "event ClearDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)"
 ] as const;
+const spaceAdminUpdatedEvent = parseAbiItem("event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed)");
 let cachedDelegateLogsProvider: JsonRpcProvider | null = null;
 
 type RuntimeContext = {
@@ -184,6 +181,12 @@ function unixToLocalDisplay(value: bigint | null): string {
   return new Date(Number(value) * 1000).toLocaleString();
 }
 
+function unixToDateInput(value: bigint): string {
+  const date = new Date(Number(value) * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 function toLoggableError(error: unknown): unknown {
   if (!error || typeof error !== "object") return error;
 
@@ -267,31 +270,60 @@ function normalizeWeightsToBps(weights: number[]): number[] | null {
   return normalized.every((item) => item > 0) ? normalized : null;
 }
 
-async function computeVotingPowerWithDelegations(params: {
-  client: PublicClient;
-  token: WalletAddress;
-  voter: WalletAddress;
+async function findBlockAtOrAfter(provider: JsonRpcProvider, targetTs: number): Promise<number> {
+  const latestBlockNumber = await provider.getBlockNumber();
+  const latestBlock = await provider.getBlock(latestBlockNumber);
+  if (!latestBlock) return latestBlockNumber;
+  if (latestBlock.timestamp <= targetTs) return latestBlockNumber;
+
+  let low = 0;
+  let high = latestBlockNumber;
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2);
+    const block = await provider.getBlock(mid);
+    const blockTs = block?.timestamp ?? 0;
+    if (blockTs < targetTs) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+async function findBlockAtOrBefore(provider: JsonRpcProvider, targetTs: number): Promise<number> {
+  const latestBlockNumber = await provider.getBlockNumber();
+  const latestBlock = await provider.getBlock(latestBlockNumber);
+  if (!latestBlock) return 0;
+  if (latestBlock.timestamp <= targetTs) return latestBlockNumber;
+  const firstAtOrAfter = await findBlockAtOrAfter(provider, targetTs);
+  const candidate = Math.max(0, firstAtOrAfter - 1);
+  const candidateBlock = await provider.getBlock(candidate);
+  if ((candidateBlock?.timestamp ?? 0) <= targetTs) return candidate;
+  return 0;
+}
+
+async function collectDelegationChangeDelegatorsByBlocks(params: {
   delegateRegistry: WalletAddress;
   delegationId: `0x${string}`;
-  fromBlock?: bigint;
-}): Promise<{ votingPower: bigint; confirmedDelegators: WalletAddress[] }> {
-  const { client, token, voter, delegateRegistry, delegationId } = params;
-  const fromBlockNumber = Number(params.fromBlock ?? 0n);
-  if (delegateRegistry.toLowerCase() === zeroAddress || delegationId.toLowerCase() === zeroBytes32) {
-    return { votingPower: 0n, confirmedDelegators: [] };
-  }
-
+  fromBlock: number;
+  toBlock: number;
+  fetchBatchSize: number;
+  onProgress?: (message: string) => void;
+  onRangeProgress?: (processedBlocks: number, totalBlocks: number) => void;
+}): Promise<WalletAddress[]> {
+  const { delegateRegistry, delegationId, fromBlock, toBlock, fetchBatchSize, onProgress, onRangeProgress } = params;
+  if (toBlock < fromBlock) return [];
   if (!cachedDelegateLogsProvider) {
     cachedDelegateLogsProvider = new JsonRpcProvider(eventLogsRpcUrl, expectedChainId);
   }
-  const registry = new Contract(delegateRegistry, delegateRegistryEthersAbi, cachedDelegateLogsProvider);
+  const provider = cachedDelegateLogsProvider;
+  const registry = new Contract(delegateRegistry, delegateRegistryEthersAbi, provider);
 
   async function queryFilterInChunks(
-    filter: unknown
+    filter: unknown,
+    rangeFrom: number,
+    rangeTo: number
   ): Promise<Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }>> {
-    const latest = await cachedDelegateLogsProvider!.getBlockNumber();
     const minSpan = 5_000;
-    const stack: Array<[number, number]> = [[fromBlockNumber, latest]];
+    const stack: Array<[number, number]> = [[rangeFrom, rangeTo]];
     const all: Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }> = [];
 
     while (stack.length > 0) {
@@ -316,16 +348,32 @@ async function computeVotingPowerWithDelegations(params: {
   async function queryFilterResilient(
     filter: unknown
   ): Promise<Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }>> {
-    try {
-      return (await registry.queryFilter(filter, fromBlockNumber, "latest")) as Array<{
-        blockNumber: number;
-        index: number;
-        args: unknown[];
-        fragment: { name: string };
-      }>;
-    } catch {
-      return queryFilterInChunks(filter);
+    const all: Array<{ blockNumber: number; index: number; args: unknown[]; fragment: { name: string } }> = [];
+    const normalizedBatchSize = Math.max(1, fetchBatchSize);
+    const totalBlocks = Math.max(1, toBlock - fromBlock + 1);
+    let processedBlocks = 0;
+    for (let currentFrom = fromBlock; currentFrom <= toBlock; currentFrom += normalizedBatchSize) {
+      const currentTo = Math.min(toBlock, currentFrom + normalizedBatchSize - 1);
+      onProgress?.(`Fetching logs for blocks ${currentFrom}-${currentTo}...`);
+      try {
+        const logs = (await registry.queryFilter(filter, currentFrom, currentTo)) as Array<{
+          blockNumber: number;
+          index: number;
+          args: unknown[];
+          fragment: { name: string };
+        }>;
+        all.push(...logs);
+        onProgress?.(`Fetched ${logs.length} logs for blocks ${currentFrom}-${currentTo}.`);
+      } catch {
+        onProgress?.(`Direct fetch failed for ${currentFrom}-${currentTo}, using fallback splitting...`);
+        const logs = await queryFilterInChunks(filter, currentFrom, currentTo);
+        all.push(...logs);
+        onProgress?.(`Fetched ${logs.length} logs via fallback for blocks ${currentFrom}-${currentTo}.`);
+      }
+      processedBlocks = Math.min(totalBlocks, processedBlocks + (currentTo - currentFrom + 1));
+      onRangeProgress?.(processedBlocks, totalBlocks);
     }
+    return all;
   }
 
   const setFilter = registry.filters.SetDelegate(null, delegationId);
@@ -341,61 +389,52 @@ async function computeVotingPowerWithDelegations(params: {
     // Registry may not expose this overload.
   }
 
-  const [setLogs, voterDelegate, clearLogsByFilter] = await Promise.all([
+  const [setLogs, clearLogsByFilter] = await Promise.all([
     queryFilterResilient(setFilter),
-    registry.delegation(voter, delegationId) as Promise<string>,
     Promise.all(clearFilters.map((filter) => queryFilterResilient(filter).catch(() => [])))
   ]);
   const clearLogs = clearLogsByFilter.flat();
-
   const replay = [...setLogs, ...clearLogs].sort((a, b) => {
-    if (a.blockNumber !== b.blockNumber) {
-      return a.blockNumber - b.blockNumber;
-    }
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
     return (a.index ?? 0) - (b.index ?? 0);
   });
-
-  const activeDelegators = new Set<string>();
+  const uniqueDelegators = new Set<string>();
   for (const log of replay) {
-    const delegator = String(log.args[0]).toLowerCase();
-    if (log.fragment.name === "SetDelegate") {
-      activeDelegators.add(delegator);
-    } else {
-      activeDelegators.delete(delegator);
-    }
+    uniqueDelegators.add(String(log.args[0]).toLowerCase());
   }
+  return [...uniqueDelegators] as WalletAddress[];
+}
 
-  const confirmedDelegators = (
-    await Promise.all(
-      [...activeDelegators].map(async (delegator) => {
-        const currentDelegate = (await registry.delegation(delegator, delegationId)) as string;
-        return currentDelegate.toLowerCase() === voter.toLowerCase() ? (delegator as WalletAddress) : null;
-      })
-    )
-  ).filter((delegator): delegator is WalletAddress => delegator !== null);
-
-  const contributors: WalletAddress[] = [...confirmedDelegators];
-  if (voterDelegate.toLowerCase() === zeroAddress) {
-    contributors.unshift(voter);
+async function findOutdatedDelegators(params: {
+  client: PublicClient;
+  delegateRegistry: WalletAddress;
+  delegationId: `0x${string}`;
+  spaceId: bigint;
+  delegators: WalletAddress[];
+}): Promise<WalletAddress[]> {
+  const { client, delegateRegistry, delegationId, spaceId, delegators } = params;
+  if (delegators.length === 0) return [];
+  if (!cachedDelegateLogsProvider) {
+    cachedDelegateLogsProvider = new JsonRpcProvider(eventLogsRpcUrl, expectedChainId);
   }
-  if (contributors.length === 0) {
-    return { votingPower: 0n, confirmedDelegators };
-  }
+  const registryContract = new Contract(delegateRegistry, delegateRegistryEthersAbi, cachedDelegateLogsProvider!);
 
-  const balances = await Promise.all(
-    contributors.map((account) =>
-      client.readContract({
-        address: token,
-        abi: [erc20BalanceOfAbi],
-        functionName: "balanceOf",
-        args: [account]
-      })
-    )
+  const results = await Promise.all(
+    delegators.map(async (delegator) => {
+      const [registryDelegate, indexedDelegate] = await Promise.all([
+        registryContract.delegation(delegator, delegationId) as Promise<string>,
+        client.readContract({
+          address: contractAddress,
+          abi: votingAbi,
+          functionName: "getSpaceDelegate",
+          args: [spaceId, delegator]
+        })
+      ]);
+      return registryDelegate.toLowerCase() !== String(indexedDelegate).toLowerCase() ? delegator : null;
+    })
   );
-  return {
-    votingPower: balances.reduce((sum, balance) => sum + balance, 0n),
-    confirmedDelegators
-  };
+
+  return results.filter((item): item is WalletAddress => item !== null);
 }
 
 function useVotingRuntime(): RuntimeContext {
@@ -408,6 +447,7 @@ function useVotingRuntime(): RuntimeContext {
   const { switchChainAsync, isPending: switchNetworkPending } = useSwitchChain();
 
   const [txPending, setTxPending] = useState(false);
+  const txPendingRef = useRef(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [txHash, setTxHash] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -462,6 +502,10 @@ function useVotingRuntime(): RuntimeContext {
   }
 
   async function executeAction(action: VotingAction): Promise<VotingTxResult | null> {
+    if (txPendingRef.current) {
+      setStatusMessage("Another transaction is already in progress. Wait for confirmation.");
+      return null;
+    }
     if (!effectiveConnected) {
       setStatusMessage("Connect wallet first");
       return null;
@@ -472,6 +516,7 @@ function useVotingRuntime(): RuntimeContext {
     }
     setStatusMessage(`Confirm "${action.functionName}" transaction in wallet...`);
     setTxHash(null);
+    txPendingRef.current = true;
     setTxPending(true);
     const waitForReceipt = async (hash: Hex, step: "main" | "registry") => {
       const maxAttempts = 3;
@@ -583,6 +628,19 @@ function useVotingRuntime(): RuntimeContext {
       if (receipt.status !== "success") {
         throw new Error(`Transaction reverted: ${action.functionName}`);
       }
+      const receiptBlock = receipt.blockNumber ?? (await client.getBlockNumber());
+      const unlockAtBlock = receiptBlock + postTxLockBlocks;
+      let currentBlock = receiptBlock;
+      while (currentBlock < unlockAtBlock) {
+        const remainingBlocks = unlockAtBlock - currentBlock;
+        const blockWord = remainingBlocks === 1n ? "block" : "blocks";
+        setStatusMessage(
+          `Tx confirmed on-chain. Waiting ${remainingBlocks.toString()} more ${blockWord} before unlocking controls for "${action.functionName}"...`
+        );
+        const delayMs = Math.max(1_500, Math.round((blockTimeSeconds * 1_000) / 2));
+        await sleep(delayMs);
+        currentBlock = await client.getBlockNumber();
+      }
       const decodedLogs: EventLikeLog[] = [];
       for (const log of receipt.logs) {
         try {
@@ -606,6 +664,7 @@ function useVotingRuntime(): RuntimeContext {
       setStatusMessage(normalizeError(error));
       return null;
     } finally {
+      txPendingRef.current = false;
       setTxPending(false);
     }
   }
@@ -865,7 +924,7 @@ function AppLayout({ runtime, children }: { runtime: RuntimeContext; children: R
             <IconButton aria-label="Close notification" className="app-toast__close" onClick={() => dismissToast("txProgress")}>
               ×
             </IconButton>
-            <div className="app-toast__body">Transaction in progress. Controls are temporarily locked until confirmation.</div>
+            <div className="app-toast__body">Transaction in progress. Controls are locked until confirmation depth reaches +10 blocks.</div>
           </StatusMessage>
         )}
         {showStatusToast && (
@@ -878,6 +937,25 @@ function AppLayout({ runtime, children }: { runtime: RuntimeContext; children: R
         )}
       </div>
     </main>
+  );
+}
+
+function ProgressLogList({ entries, testId }: { entries: string[]; testId: string }) {
+  const listRef = useRef<HTMLUListElement | null>(null);
+
+  useEffect(() => {
+    if (!listRef.current) return;
+    listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [entries.length]);
+
+  return (
+    <ul ref={listRef} className="page-loader__log" data-testid={testId}>
+      {entries.map((entry, idx) => (
+        <li key={`${idx}-${entry}`} className="text__caption">
+          [{idx + 1}] {entry}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1011,13 +1089,7 @@ function SpacesPage({ runtime }: { runtime: RuntimeContext }) {
             <p className="text__caption muted" style={{ margin: 0 }}>
               Loading log
             </p>
-            <ul className="page-loader__log" data-testid="spaces-loading-log">
-              {loadingLog.map((entry, idx) => (
-                <li key={`${idx}-${entry}`} className="text__caption">
-                  [{idx + 1}] {entry}
-                </li>
-              ))}
-            </ul>
+            <ProgressLogList entries={loadingLog} testId="spaces-loading-log" />
           </div>
         </Card>
       </section>
@@ -1134,6 +1206,26 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
   const [loadingLog, setLoadingLog] = useState<string[]>([]);
   const [page, setPage] = useState(1);
   const [activeTab, setActiveTab] = useState("proposals");
+  const [openDelegateModal, setOpenDelegateModal] = useState(false);
+  const [delegateAddress, setDelegateAddress] = useState(zeroAddress);
+  const [syncFromDate, setSyncFromDate] = useState("");
+  const [syncToDate, setSyncToDate] = useState("");
+  const [syncFetchBatchSizeInput, setSyncFetchBatchSizeInput] = useState("1000");
+  const [syncSummary, setSyncSummary] = useState("");
+  const [syncInProgress, setSyncInProgress] = useState(false);
+  const [syncLoadingLog, setSyncLoadingLog] = useState<string[]>([]);
+  const [syncDateProgressPct, setSyncDateProgressPct] = useState(0);
+  const [syncFoundDelegationsCount, setSyncFoundDelegationsCount] = useState(0);
+  const [ownerSyncPeriod, setOwnerSyncPeriod] = useState<{ fromTs: bigint; toTs: bigint }>({ fromTs: 0n, toTs: 0n });
+  const resolveOwnerAutoSyncRange = (lastSyncedToTs: bigint) => {
+    const nowTs = BigInt(Math.floor(Date.now() / 1000));
+    const fallbackFromTs = nowTs - BigInt(7 * 24 * 3600);
+    return {
+      fromTs: lastSyncedToTs > 0n ? lastSyncedToTs : fallbackFromTs,
+      toTs: nowTs
+    };
+  };
+  const [canManageSpaceSettings, setCanManageSpaceSettings] = useState(false);
 
   useEffect(() => {
     if (parsedSpaceId === null) return;
@@ -1203,6 +1295,260 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
     };
   }, [parsedSpaceId, runtime.client, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
 
+  useEffect(() => {
+    if (!openDelegateModal) return;
+    if (parsedSpaceId === null || !space) return;
+    let cancelled = false;
+
+    async function run() {
+      try {
+        let loadedPeriod = { fromTs: 0n, toTs: 0n };
+        if (runtime.effectiveAddress) {
+          if (useMock) {
+            const period = runtime.mockService.getSpaceDelegationSyncPeriod(parsedSpaceId);
+            if (!cancelled) {
+              setOwnerSyncPeriod(period);
+            }
+            loadedPeriod = period;
+          } else {
+            const [indexedDelegate, period] = await Promise.all([
+              runtime.client.readContract({
+                address: contractAddress,
+                abi: votingAbi,
+                functionName: "getSpaceDelegate",
+                args: [parsedSpaceId, runtime.effectiveAddress]
+              }),
+              runtime.client.readContract({
+                address: contractAddress,
+                abi: votingAbi,
+                functionName: "getSpaceDelegationSyncPeriod",
+                args: [parsedSpaceId]
+              })
+            ]);
+            if (!cancelled) {
+              const delegate = String(indexedDelegate).toLowerCase() === zeroAddress ? zeroAddress : (indexedDelegate as WalletAddress);
+              setDelegateAddress(delegate);
+              setOwnerSyncPeriod({ fromTs: period[0], toTs: period[1] });
+            }
+            loadedPeriod = { fromTs: period[0], toTs: period[1] };
+          }
+        }
+        if (runtime.effectiveAddress?.toLowerCase() === space.owner.toLowerCase()) {
+          const { fromTs, toTs } = resolveOwnerAutoSyncRange(loadedPeriod.toTs);
+          if (!cancelled) {
+            setSyncFromDate(unixToDateInput(fromTs));
+            setSyncToDate(unixToDateInput(toTs));
+          }
+        }
+      } catch {
+        // keep modal usable even if reads fail
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [openDelegateModal, parsedSpaceId, runtime.client, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce, space]);
+
+  useEffect(() => {
+    if (parsedSpaceId === null || !space || !runtime.effectiveAddress) {
+      setCanManageSpaceSettings(false);
+      return;
+    }
+
+    let cancelled = false;
+    const currentAddress = runtime.effectiveAddress.toLowerCase();
+    const ownerAddress = space.owner.toLowerCase();
+    if (currentAddress === ownerAddress) {
+      setCanManageSpaceSettings(true);
+      return;
+    }
+
+    async function run() {
+      if (useMock) {
+        if (!cancelled) setCanManageSpaceSettings(runtime.mockService.isAdmin(parsedSpaceId, runtime.effectiveAddress!));
+        return;
+      }
+
+      try {
+        const isAdmin = await runtime.client.readContract({
+          address: contractAddress,
+          abi: votingAbi,
+          functionName: "isAdmin",
+          args: [parsedSpaceId, runtime.effectiveAddress]
+        });
+        if (!cancelled) setCanManageSpaceSettings(Boolean(isAdmin));
+      } catch {
+        if (!cancelled) setCanManageSpaceSettings(false);
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedSpaceId, runtime.client, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce, space]);
+
+  async function setDelegateForCurrentSpace() {
+    if (parsedSpaceId === null) return;
+    if (!isWalletAddress(delegateAddress)) return;
+    await runtime.executeAction({ functionName: "setDelegateForSpace", args: [parsedSpaceId, delegateAddress] });
+  }
+
+  async function clearDelegateForCurrentSpace() {
+    if (parsedSpaceId === null) return;
+    await runtime.executeAction({ functionName: "clearDelegateForSpace", args: [parsedSpaceId] });
+  }
+
+  async function runDelegationSync(fromTs: bigint, toTs: bigint, fetchBatchSize: number) {
+    if (parsedSpaceId === null || !space) return;
+    if (fromTs > toTs) return;
+    if (useMock) {
+      setSyncSummary("Delegation log sync is not available in mock mode.");
+      return;
+    }
+    setSyncInProgress(true);
+    setSyncSummary("Collecting delegation events...");
+    setSyncLoadingLog(["Starting delegation sync..."]);
+    setSyncDateProgressPct(0);
+    setSyncFoundDelegationsCount(0);
+    const appendSyncLog = (message: string) => {
+      setSyncLoadingLog((prev) => [...prev, message]);
+    };
+    try {
+      appendSyncLog("Loading delegate registry address...");
+      const delegateRegistry = await runtime.client.readContract({
+        address: contractAddress,
+        abi: votingAbi,
+        functionName: "delegateRegistry"
+      });
+      if (String(delegateRegistry).toLowerCase() === zeroAddress) {
+        appendSyncLog("Delegate registry is not configured.");
+        setSyncSummary("DelegateRegistry is not configured.");
+        return;
+      }
+      if (space.delegationId.toLowerCase() === zeroBytes32) {
+        appendSyncLog("Space delegation id is not set.");
+        setSyncSummary("Space delegation id is not set.");
+        return;
+      }
+
+      if (!cachedDelegateLogsProvider) {
+        cachedDelegateLogsProvider = new JsonRpcProvider(eventLogsRpcUrl, expectedChainId);
+      }
+      appendSyncLog("Resolving block range for selected date period...");
+      const fromBlock = await findBlockAtOrAfter(cachedDelegateLogsProvider, Number(fromTs));
+      const toBlock = await findBlockAtOrBefore(cachedDelegateLogsProvider, Number(toTs));
+      appendSyncLog(`Resolved block range: ${fromBlock}-${toBlock}.`);
+      const touchedDelegators = await collectDelegationChangeDelegatorsByBlocks({
+        delegateRegistry: delegateRegistry as WalletAddress,
+        delegationId: space.delegationId,
+        fromBlock,
+        toBlock,
+        fetchBatchSize,
+        onProgress: appendSyncLog,
+        onRangeProgress: (processedBlocks, totalBlocks) => {
+          const pct = Math.round((processedBlocks / totalBlocks) * 100);
+          setSyncDateProgressPct(Math.max(0, Math.min(100, pct)));
+        }
+      });
+      setSyncFoundDelegationsCount(touchedDelegators.length);
+      let batchSyncComplete = true;
+      if (touchedDelegators.length === 0) {
+        appendSyncLog("No delegators affected in selected period.");
+        setSyncSummary("No delegation events found in the selected period.");
+      } else {
+        appendSyncLog(`Found ${touchedDelegators.length} delegators affected by events. Checking contract index...`);
+        const outdatedDelegators = await findOutdatedDelegators({
+          client: runtime.client,
+          delegateRegistry: delegateRegistry as WalletAddress,
+          delegationId: space.delegationId,
+          spaceId: parsedSpaceId,
+          delegators: touchedDelegators
+        });
+        appendSyncLog(`Outdated delegators to sync: ${outdatedDelegators.length}.`);
+        const batchSize = 100;
+        let syncedCount = 0;
+        for (let i = 0; i < outdatedDelegators.length; i += batchSize) {
+          const batch = outdatedDelegators.slice(i, i + batchSize);
+          appendSyncLog(
+            `Submitting sync batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(outdatedDelegators.length / batchSize)} (${batch.length} delegators)...`
+          );
+          const receipt = await runtime.executeAction({
+            functionName: "syncDelegationsForSpace",
+            args: [parsedSpaceId, batch]
+          });
+          if (!receipt) {
+            batchSyncComplete = false;
+            appendSyncLog("Sync batch failed. Stopping cycle.");
+            break;
+          }
+          syncedCount += batch.length;
+          appendSyncLog(`Batch confirmed. Synced ${syncedCount}/${outdatedDelegators.length}.`);
+        }
+        const checkpointNote = batchSyncComplete
+          ? "Cycle completed."
+          : "Cycle interrupted before all batches completed. Checkpoint was not updated.";
+        setSyncSummary(
+          `Period blocks ${fromBlock}-${toBlock} (fetch batch=${fetchBatchSize}): found ${touchedDelegators.length} delegations, outdated ${outdatedDelegators.length}, synced ${syncedCount}. ${checkpointNote}`
+        );
+      }
+
+      const isSpaceOwner =
+        runtime.effectiveAddress !== null && runtime.effectiveAddress !== undefined &&
+        runtime.effectiveAddress.toLowerCase() === space.owner.toLowerCase();
+      if (isSpaceOwner && batchSyncComplete) {
+        appendSyncLog("All sync batches completed. Updating on-chain checkpoint period...");
+        const checkpointTx = await runtime.executeAction({
+          functionName: "setSpaceDelegationSyncPeriod",
+          args: [parsedSpaceId, fromTs, toTs]
+        });
+        if (checkpointTx) {
+          setOwnerSyncPeriod({ fromTs, toTs });
+          appendSyncLog("Checkpoint period updated successfully.");
+        } else {
+          appendSyncLog("Checkpoint update transaction failed.");
+        }
+      } else if (isSpaceOwner && !batchSyncComplete) {
+        appendSyncLog("Checkpoint update skipped because sync cycle did not fully complete.");
+      }
+      appendSyncLog("Delegation sync finished.");
+      setSyncDateProgressPct(100);
+    } catch (error) {
+      appendSyncLog(`Sync failed: ${normalizeError(error)}`);
+      setSyncSummary(`Sync failed: ${normalizeError(error)}`);
+    } finally {
+      setSyncInProgress(false);
+    }
+  }
+
+  async function syncDelegationsByDateRange() {
+    if (!space) return;
+    const isSpaceOwner =
+      runtime.effectiveAddress !== null &&
+      runtime.effectiveAddress !== undefined &&
+      runtime.effectiveAddress.toLowerCase() === space.owner.toLowerCase();
+    if (!isSpaceOwner) {
+      setSyncSummary("Sync is available only to the space owner.");
+      return;
+    }
+
+    const range = resolveOwnerAutoSyncRange(ownerSyncPeriod.toTs);
+    if (range.fromTs > range.toTs) {
+      setSyncSummary("Nothing new to sync yet.");
+      return;
+    }
+    setSyncFromDate(unixToDateInput(range.fromTs));
+    setSyncToDate(unixToDateInput(range.toTs));
+    const fetchBatchSize = Number.parseInt(syncFetchBatchSizeInput, 10);
+    if (!Number.isFinite(fetchBatchSize) || fetchBatchSize <= 0) {
+      setSyncSummary("Invalid fetch batch size. Use a positive integer.");
+      return;
+    }
+    await runDelegationSync(range.fromTs, range.toTs, fetchBatchSize);
+  }
+
   if (parsedSpaceId === null) return <p>Invalid space id</p>;
   if (isLoading) {
     return (
@@ -1226,19 +1572,18 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
             <p className="text__caption muted" style={{ margin: 0 }}>
               Loading log
             </p>
-            <ul className="page-loader__log" data-testid="space-loading-log">
-              {loadingLog.map((entry, idx) => (
-                <li key={`${idx}-${entry}`} className="text__caption">
-                  [{idx + 1}] {entry}
-                </li>
-              ))}
-            </ul>
+            <ProgressLogList entries={loadingLog} testId="space-loading-log" />
           </div>
         </Card>
       </section>
     );
   }
   const paged = paginateItems(proposals, page, 10);
+  const isSpaceOwner =
+    runtime.effectiveAddress !== null &&
+    runtime.effectiveAddress !== undefined &&
+    space !== null &&
+    runtime.effectiveAddress.toLowerCase() === space.owner.toLowerCase();
 
   return (
     <section className="page-stack">
@@ -1258,7 +1603,14 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
             <Button variant="primary" onClick={() => navigate(`/spaces/${parsedSpaceId.toString()}/proposals/new`)}>
               Create Proposal
             </Button>
-            <Button onClick={() => navigate(`/spaces/${parsedSpaceId.toString()}/settings`)}>Settings</Button>
+            <Button data-testid="open-delegate-modal-btn" onClick={() => setOpenDelegateModal(true)}>
+              Delegate
+            </Button>
+            {canManageSpaceSettings && (
+              <Button data-testid="open-space-settings-btn" onClick={() => navigate(`/spaces/${parsedSpaceId.toString()}/settings`)}>
+                Settings
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -1310,6 +1662,133 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
           </>
         )}
       </Card>
+      <Modal open={openDelegateModal} wide onOverlayClick={runtime.txPending || runtime.isWrongNetwork || syncInProgress ? undefined : () => setOpenDelegateModal(false)}>
+        <div className="stack-3">
+          <h3 className="text__title3" style={{ margin: 0 }}>
+            Delegate & Sync
+          </h3>
+          <Field>
+            <FieldLabel>Delegate my voting power to</FieldLabel>
+            <Input
+              data-testid="space-delegate-address-input"
+              value={delegateAddress}
+              onChange={(e) => setDelegateAddress(e.target.value)}
+              placeholder="0x..."
+              disabled={runtime.txPending || runtime.isWrongNetwork || syncInProgress}
+            />
+          </Field>
+          <div className="row">
+            <Button
+              data-testid="set-space-delegate-btn"
+              variant="primary"
+              onClick={setDelegateForCurrentSpace}
+              disabled={!isWalletAddress(delegateAddress) || runtime.txPending || runtime.isWrongNetwork || syncInProgress}
+            >
+              {runtime.txPending ? "Submitting..." : "Delegate"}
+            </Button>
+            <Button
+              data-testid="clear-space-delegate-btn"
+              onClick={clearDelegateForCurrentSpace}
+              disabled={runtime.txPending || runtime.isWrongNetwork || syncInProgress}
+            >
+              Clear delegate
+            </Button>
+          </div>
+
+          {isSpaceOwner && (
+            <Card surface="dark" className="stack-3">
+              <h4 className="text__title4" style={{ margin: 0 }}>
+                Sync delegations by date range
+              </h4>
+              {syncInProgress ? (
+                <div className="page-loader">
+                  <div className="page-loader__spinner" aria-hidden="true" />
+                  <h4 className="text__title4" style={{ margin: 0 }}>
+                    Sync in progress
+                  </h4>
+                  <p className="text__paragraph muted" style={{ margin: 0 }}>
+                    Processing delegation logs and applying sync batches.
+                  </p>
+                  <p className="text__caption" style={{ margin: 0 }} data-testid="delegate-sync-found-count">
+                    Found delegations: {syncFoundDelegationsCount}
+                  </p>
+                  <div style={{ width: "100%" }}>
+                    <div className="proposal-result__track" role="img" aria-label={`Date range sync progress ${syncDateProgressPct}%`}>
+                      <div className="proposal-result__fill" style={{ width: `${syncDateProgressPct}%` }} />
+                    </div>
+                    <p className="text__caption muted" style={{ margin: "6px 0 0 0" }} data-testid="delegate-sync-date-progress">
+                      Date range progress: {syncDateProgressPct}%
+                    </p>
+                  </div>
+                  <div className="page-loader__log-wrap">
+                    <p className="text__caption muted" style={{ margin: 0 }}>
+                      Sync log
+                    </p>
+                    <ProgressLogList entries={syncLoadingLog} testId="delegate-sync-loading-log" />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <Field>
+                      <FieldLabel>From date</FieldLabel>
+                      <Input data-testid="delegate-sync-from-date" type="date" value={syncFromDate} readOnly />
+                    </Field>
+                    <Field>
+                      <FieldLabel>To date</FieldLabel>
+                      <Input data-testid="delegate-sync-to-date" type="date" value={syncToDate} readOnly />
+                    </Field>
+                  </div>
+                  <Field>
+                    <FieldLabel>Event fetch batch size (blocks)</FieldLabel>
+                    <Input
+                      data-testid="delegate-sync-fetch-batch-size"
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={syncFetchBatchSizeInput}
+                      onChange={(e) => setSyncFetchBatchSizeInput(e.target.value)}
+                      disabled={runtime.txPending || runtime.isWrongNetwork || syncInProgress}
+                    />
+                  </Field>
+                  <div className="row">
+                    <Button
+                      data-testid="delegate-sync-btn"
+                      variant="primary"
+                      onClick={syncDelegationsByDateRange}
+                      disabled={
+                        runtime.txPending ||
+                        runtime.isWrongNetwork ||
+                        syncInProgress ||
+                        !syncFromDate ||
+                        !syncToDate ||
+                        !Number.isFinite(Number.parseInt(syncFetchBatchSizeInput, 10)) ||
+                        Number.parseInt(syncFetchBatchSizeInput, 10) <= 0
+                      }
+                    >
+                      {syncInProgress ? "Syncing..." : "Sync delegations"}
+                    </Button>
+                  </div>
+                </>
+              )}
+              <p className="text__caption" data-testid="delegate-owner-sync-period">
+                Last synced period: {ownerSyncPeriod.fromTs > 0n ? unixToLocalDisplay(ownerSyncPeriod.fromTs) : "-"} to{" "}
+                {ownerSyncPeriod.toTs > 0n ? unixToLocalDisplay(ownerSyncPeriod.toTs) : "-"}
+              </p>
+              {syncSummary && (
+                <p className="text__caption" data-testid="delegate-sync-summary">
+                  {syncSummary}
+                </p>
+              )}
+            </Card>
+          )}
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <Button onClick={() => setOpenDelegateModal(false)} disabled={runtime.txPending || runtime.isWrongNetwork || syncInProgress}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 }
@@ -1467,22 +1946,45 @@ function ProposalCreatePage({ runtime }: { runtime: RuntimeContext }) {
 }
 
 function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
-  const navigate = useNavigate();
   const { spaceId } = useParams();
   const parsedSpaceId = spaceId && /^\d+$/.test(spaceId) ? BigInt(spaceId) : null;
-  const [adminAccount, setAdminAccount] = useState("0x0000000000000000000000000000000000000000");
-  const [allowed, setAllowed] = useState(true);
+  const [settingsTab, setSettingsTab] = useState<"admins" | "delegation">("admins");
+  const [adminAccount, setAdminAccount] = useState("");
+  const [spaceAdmins, setSpaceAdmins] = useState<WalletAddress[]>([]);
+  const [adminsLoading, setAdminsLoading] = useState(false);
+  const [adminsError, setAdminsError] = useState<string | null>(null);
   const [delegationIdInput, setDelegationIdInput] = useState("");
-  const [delegateAddress, setDelegateAddress] = useState("0x0000000000000000000000000000000000000000");
+  const [permissionsResolved, setPermissionsResolved] = useState(false);
+  const [canManageSpaceSettings, setCanManageSpaceSettings] = useState(false);
+  const [canManageAdmins, setCanManageAdmins] = useState(false);
 
   useEffect(() => {
-    if (parsedSpaceId === null) return;
+    if (parsedSpaceId === null) {
+      setPermissionsResolved(true);
+      setCanManageSpaceSettings(false);
+      setCanManageAdmins(false);
+      return;
+    }
+    let cancelled = false;
     async function run() {
       if (useMock) {
         const space = runtime.mockService.getSpace(parsedSpaceId);
         if (space) {
-          setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
+          const isOwner =
+            runtime.effectiveAddress !== null &&
+            runtime.effectiveAddress !== undefined &&
+            runtime.effectiveAddress.toLowerCase() === space.owner.toLowerCase();
+          const isAdmin = runtime.effectiveAddress ? runtime.mockService.isAdmin(parsedSpaceId, runtime.effectiveAddress) : false;
+          if (!cancelled) {
+            setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
+            setCanManageSpaceSettings(isOwner || isAdmin);
+            setCanManageAdmins(isOwner);
+          }
+        } else if (!cancelled) {
+          setCanManageSpaceSettings(false);
+          setCanManageAdmins(false);
         }
+        if (!cancelled) setPermissionsResolved(true);
         return;
       }
       try {
@@ -1492,20 +1994,105 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
           functionName: "getSpace",
           args: [parsedSpaceId]
         });
-        setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
+        const isOwner =
+          runtime.effectiveAddress !== null &&
+          runtime.effectiveAddress !== undefined &&
+          runtime.effectiveAddress.toLowerCase() === String(space.owner).toLowerCase();
+        const isAdmin =
+          !isOwner && runtime.effectiveAddress
+            ? await runtime.client.readContract({
+                address: contractAddress,
+                abi: votingAbi,
+                functionName: "isAdmin",
+                args: [parsedSpaceId, runtime.effectiveAddress]
+              })
+            : false;
+        if (!cancelled) {
+          setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
+          setCanManageSpaceSettings(isOwner || Boolean(isAdmin));
+          setCanManageAdmins(isOwner);
+        }
       } catch {
-        // ignore load errors on settings page
+        if (!cancelled) {
+          setCanManageSpaceSettings(false);
+          setCanManageAdmins(false);
+        }
+      } finally {
+        if (!cancelled) setPermissionsResolved(true);
       }
     }
     void run();
-  }, [parsedSpaceId, runtime.client, runtime.mockService, runtime.refreshNonce]);
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedSpaceId, runtime.client, runtime.effectiveAddress, runtime.mockService, runtime.refreshNonce]);
+
+  useEffect(() => {
+    if (parsedSpaceId === null) {
+      setSpaceAdmins([]);
+      setAdminsError(null);
+      setAdminsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    async function run() {
+      setAdminsLoading(true);
+      setAdminsError(null);
+      try {
+        if (useMock) {
+          if (cancelled) return;
+          setSpaceAdmins(runtime.mockService.listAdmins(parsedSpaceId));
+          return;
+        }
+        const logs = await runtime.eventLogsClient.getLogs({
+          address: contractAddress,
+          event: spaceAdminUpdatedEvent,
+          args: { spaceId: parsedSpaceId },
+          fromBlock: 0n,
+          toBlock: "latest"
+        });
+        if (cancelled) return;
+
+        const latestByAdmin = new Map<string, { account: WalletAddress; allowed: boolean }>();
+        for (const log of logs) {
+          const account = String(log.args.account ?? "").toLowerCase();
+          if (!isWalletAddress(account)) continue;
+          latestByAdmin.set(account, {
+            account,
+            allowed: Boolean(log.args.allowed)
+          });
+        }
+        const admins = [...latestByAdmin.values()]
+          .filter((item) => item.allowed)
+          .map((item) => item.account)
+          .sort((a, b) => a.localeCompare(b));
+        setSpaceAdmins(admins);
+      } catch (error) {
+        if (!cancelled) {
+          setAdminsError(normalizeError(error));
+          setSpaceAdmins([]);
+        }
+      } finally {
+        if (!cancelled) setAdminsLoading(false);
+      }
+    }
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedSpaceId, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
 
   async function submit() {
     if (parsedSpaceId === null) return;
     if (!isWalletAddress(adminAccount)) return;
-    const result = await runtime.executeAction({ functionName: "setAdmin", args: [parsedSpaceId, adminAccount, allowed] });
+    const result = await runtime.executeAction({ functionName: "setAdmin", args: [parsedSpaceId, adminAccount, true] });
     if (!result) return;
-    navigate(`/spaces/${parsedSpaceId.toString()}`);
+    setAdminAccount("");
+  }
+
+  async function removeAdmin(account: WalletAddress) {
+    if (parsedSpaceId === null) return;
+    await runtime.executeAction({ functionName: "setAdmin", args: [parsedSpaceId, account, false] });
   }
 
   async function saveDelegationId() {
@@ -1513,17 +2100,6 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
     const delegationId = delegateIdTextToBytes32(delegationIdInput);
     if (!delegationId) return;
     await runtime.executeAction({ functionName: "setSpaceDelegationId", args: [parsedSpaceId, delegationId] });
-  }
-
-  async function setDelegate() {
-    if (parsedSpaceId === null) return;
-    if (!isWalletAddress(delegateAddress)) return;
-    await runtime.executeAction({ functionName: "setDelegateForSpace", args: [parsedSpaceId, delegateAddress] });
-  }
-
-  async function clearDelegate() {
-    if (parsedSpaceId === null) return;
-    await runtime.executeAction({ functionName: "clearDelegateForSpace", args: [parsedSpaceId] });
   }
 
   if (parsedSpaceId === null) return <p>Invalid space id</p>;
@@ -1543,68 +2119,121 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
         <h2 className="text__title2" style={{ marginTop: 0 }}>
           Space #{parsedSpaceId.toString()} settings
         </h2>
-        <fieldset disabled={runtime.txPending || runtime.isWrongNetwork} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
-          <div className="stack-4">
-            <Field>
-              <FieldLabel>Admin address</FieldLabel>
-              <Input
-                data-testid="admin-account-input"
-                value={adminAccount}
-                onChange={(e) => setAdminAccount(e.target.value)}
-                placeholder="0x..."
+        {!permissionsResolved ? (
+          <p className="text__paragraph" style={{ marginBottom: 0 }}>
+            Checking permissions...
+          </p>
+        ) : !canManageSpaceSettings ? (
+          <p className="text__paragraph" style={{ marginBottom: 0 }}>
+            You do not have permission to change this space settings.
+          </p>
+        ) : (
+          <fieldset disabled={runtime.txPending || runtime.isWrongNetwork} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            <div className="stack-4">
+              <Tabs
+                activeId={settingsTab}
+                onChange={(tab) => setSettingsTab(tab as "admins" | "delegation")}
+                items={[
+                  { id: "admins", label: "Admins" },
+                  { id: "delegation", label: "Space delegation" }
+                ]}
               />
-            </Field>
-            <label className="ui-checkbox-line text__paragraph">
-              <input type="checkbox" checked={allowed} onChange={(e) => setAllowed(e.target.checked)} />
-              Allow admin role
-            </label>
-            <Button data-testid="set-admin-btn" variant="primary" onClick={submit} disabled={runtime.txPending || runtime.isWrongNetwork}>
-              {runtime.txPending ? "Saving..." : "Save"}
-            </Button>
-            <Field>
-              <FieldLabel>Space delegation id (text or bytes32)</FieldLabel>
-              <Input
-                data-testid="space-delegation-id-input"
-                value={delegationIdInput}
-                onChange={(e) => setDelegationIdInput(e.target.value)}
-                placeholder="tetubal.eth"
-              />
-            </Field>
-            <p className="text__caption" style={{ marginTop: -8 }}>
-              Encoded bytes32: {delegationIdHex ?? "invalid value (use text up to 32 bytes or full 0x-prefixed bytes32)"}
-            </p>
-            <Button
-              data-testid="set-space-delegation-id-btn"
-              variant="primary"
-              onClick={saveDelegationId}
-              disabled={!delegationIdHex || runtime.txPending || runtime.isWrongNetwork}
-            >
-              {runtime.txPending ? "Saving..." : "Save delegation id"}
-            </Button>
-            <Field>
-              <FieldLabel>Delegate my voting power to</FieldLabel>
-              <Input
-                data-testid="space-delegate-address-input"
-                value={delegateAddress}
-                onChange={(e) => setDelegateAddress(e.target.value)}
-                placeholder="0x..."
-              />
-            </Field>
-            <div className="row">
-              <Button
-                data-testid="set-space-delegate-btn"
-                variant="primary"
-                onClick={setDelegate}
-                disabled={!isWalletAddress(delegateAddress) || runtime.txPending || runtime.isWrongNetwork}
-              >
-                {runtime.txPending ? "Submitting..." : "Delegate"}
-              </Button>
-              <Button data-testid="clear-space-delegate-btn" onClick={clearDelegate} disabled={runtime.txPending || runtime.isWrongNetwork}>
-                Clear delegate
-              </Button>
+
+              {settingsTab === "admins" && (
+                <div className="stack-3">
+                  <Card surface="dark" className="stack-3">
+                    <h3 className="text__title4" style={{ margin: 0 }}>
+                      Current admins
+                    </h3>
+                    {adminsLoading ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        Loading admins...
+                      </p>
+                    ) : adminsError ? (
+                      <StatusMessage tone="error">{adminsError}</StatusMessage>
+                    ) : spaceAdmins.length === 0 ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        No admins assigned yet.
+                      </p>
+                    ) : (
+                      <div className="stack-2">
+                        {spaceAdmins.map((account) => (
+                          <div key={account} className="row-between">
+                            <span className="text__paragraph" style={{ margin: 0 }}>
+                              {account}
+                            </span>
+                            {canManageAdmins && (
+                              <Button
+                                variant="error"
+                                onClick={() => void removeAdmin(account)}
+                                disabled={runtime.txPending || runtime.isWrongNetwork}
+                                aria-label={`Remove admin ${account}`}
+                                title="Remove admin"
+                              >
+                                ×
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+
+                  {canManageAdmins ? (
+                    <>
+                      <Field>
+                        <FieldLabel>Admin address</FieldLabel>
+                        <Input
+                          data-testid="admin-account-input"
+                          value={adminAccount}
+                          onChange={(e) => setAdminAccount(e.target.value)}
+                          placeholder="0x..."
+                        />
+                      </Field>
+                      <Button
+                        data-testid="set-admin-btn"
+                        variant="primary"
+                        onClick={submit}
+                        disabled={!isWalletAddress(adminAccount) || runtime.txPending || runtime.isWrongNetwork}
+                      >
+                        {runtime.txPending ? "Adding..." : "Add Admin"}
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text__paragraph" style={{ margin: 0 }}>
+                      Only the space owner can add or remove admins.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {settingsTab === "delegation" && (
+                <div className="stack-3">
+                  <Field>
+                    <FieldLabel>Space delegation id (text or bytes32)</FieldLabel>
+                    <Input
+                      data-testid="space-delegation-id-input"
+                      value={delegationIdInput}
+                      onChange={(e) => setDelegationIdInput(e.target.value)}
+                      placeholder="tetubal.eth"
+                    />
+                  </Field>
+                  <p className="text__caption" style={{ marginTop: -8 }}>
+                    Encoded bytes32: {delegationIdHex ?? "invalid value (use text up to 32 bytes or full 0x-prefixed bytes32)"}
+                  </p>
+                  <Button
+                    data-testid="set-space-delegation-id-btn"
+                    variant="primary"
+                    onClick={saveDelegationId}
+                    disabled={!delegationIdHex || runtime.txPending || runtime.isWrongNetwork}
+                  >
+                    {runtime.txPending ? "Saving..." : "Save delegation id"}
+                  </Button>
+                </div>
+              )}
             </div>
-          </div>
-        </fieldset>
+          </fieldset>
+        )}
       </Card>
     </section>
   );
@@ -1621,6 +2250,8 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   const [loadingLog, setLoadingLog] = useState<string[]>([]);
   const [selectedOptions, setSelectedOptions] = useState<Record<number, boolean>>({});
   const [weightsInput, setWeightsInput] = useState<Record<number, string>>({});
+  const [voteActionPending, setVoteActionPending] = useState<"single" | "multi" | "delete" | null>(null);
+  const [pendingSingleOptionIndex, setPendingSingleOptionIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (parsedProposalId === null) return;
@@ -1725,48 +2356,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
             args: [normalizedProposal.spaceId, runtime.effectiveAddress]
           });
           appendLoadingLog(`On-chain voting power loaded: ${onchainPower.toString()}.`);
-          try {
-            appendLoadingLog("Loading space token and delegate registry to compute delegated voting power...");
-            const [space, delegateRegistry, spaceCreatedLogs] = await Promise.all([
-              runtime.client.readContract({
-                address: contractAddress,
-                abi: [readSpaceAbi],
-                functionName: "getSpace",
-                args: [normalizedProposal.spaceId]
-              }),
-              runtime.client.readContract({
-                address: contractAddress,
-                abi: [readDelegateRegistryAbi],
-                functionName: "delegateRegistry"
-              }),
-              runtime.eventLogsClient.getLogs({
-                address: contractAddress,
-                event: spaceCreatedEventAbi,
-                args: { spaceId: normalizedProposal.spaceId },
-                fromBlock: 0n,
-                toBlock: "latest"
-              })
-            ]);
-            appendLoadingLog(
-              `Delegation context loaded (token=${String(space.token)}, delegationId=${String(space.delegationId)}, registry=${String(delegateRegistry)}).`
-            );
-            const { votingPower: delegatedPower } = await computeVotingPowerWithDelegations({
-              client: runtime.client,
-              token: space.token as WalletAddress,
-              voter: runtime.effectiveAddress,
-              delegateRegistry: delegateRegistry as WalletAddress,
-              delegationId: space.delegationId as `0x${string}`,
-              fromBlock: spaceCreatedLogs[0]?.blockNumber ?? 0n
-            });
-            const finalPower = delegatedPower > onchainPower ? delegatedPower : onchainPower;
-            if (!cancelled) setVotingPower(finalPower);
-            appendLoadingLog(
-              `Delegated voting power computed: ${delegatedPower.toString()}; effective voting power selected: ${finalPower.toString()}.`
-            );
-          } catch (error) {
-            if (!cancelled) setVotingPower(onchainPower);
-            appendLoadingLog(`Delegation-aware voting power fallback to on-chain value due to error: ${normalizeError(error)}.`);
-          }
+          if (!cancelled) setVotingPower(onchainPower);
         } else {
           if (!cancelled) setVotingPower(0n);
           appendLoadingLog("Wallet is not connected; voting power is set to 0.");
@@ -1807,13 +2397,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
             <p className="text__caption muted" style={{ margin: 0 }}>
               Loading log
             </p>
-            <ul className="page-loader__log" data-testid="proposal-loading-log">
-              {loadingLog.map((entry, idx) => (
-                <li key={`${idx}-${entry}`} className="text__caption">
-                  [{idx + 1}] {entry}
-                </li>
-              ))}
-            </ul>
+            <ProgressLogList entries={loadingLog} testId="proposal-loading-log" />
           </div>
         </Card>
       </section>
@@ -1849,36 +2433,15 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   const totalTallyWeight = tallies[1].reduce((sum, weight) => sum + weight, 0n);
 
   async function voteSingle(optionIndex: number) {
-    if (runtime.effectiveAddress) {
-      try {
-        const [space, delegateRegistry] = await Promise.all([
-          runtime.client.readContract({
-            address: contractAddress,
-            abi: [readSpaceAbi],
-            functionName: "getSpace",
-            args: [proposal.spaceId]
-          }),
-          runtime.client.readContract({
-            address: contractAddress,
-            abi: [readDelegateRegistryAbi],
-            functionName: "delegateRegistry"
-          })
-        ]);
-        const { confirmedDelegators } = await computeVotingPowerWithDelegations({
-          client: runtime.client,
-          token: space.token as WalletAddress,
-          voter: runtime.effectiveAddress,
-          delegateRegistry: delegateRegistry as WalletAddress,
-          delegationId: space.delegationId as `0x${string}`
-        });
-        if (confirmedDelegators.length > 0) {
-          await runtime.executeAction({ functionName: "syncDelegationsForSpace", args: [proposal.spaceId, confirmedDelegators] });
-        }
-      } catch {
-        // Ignore sync preflight errors and still allow vote transaction.
-      }
+    if (voteActionPending !== null || runtime.txPending) return;
+    setVoteActionPending("single");
+    setPendingSingleOptionIndex(optionIndex);
+    try {
+      await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, [optionIndex], [10000]] });
+    } finally {
+      setVoteActionPending(null);
+      setPendingSingleOptionIndex(null);
     }
-    await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, [optionIndex], [10000]] });
   }
 
   function toggleOption(optionIndex: number, checked: boolean) {
@@ -1893,51 +2456,40 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
   }
 
   async function voteMulti() {
+    if (voteActionPending !== null || runtime.txPending) return;
+    setVoteActionPending("multi");
     const optionIndices = Object.entries(selectedOptions)
       .filter(([, checked]) => checked)
       .map(([idx]) => Number(idx))
       .sort((a, b) => a - b);
-    if (optionIndices.length === 0) return;
+    if (optionIndices.length === 0) {
+      setVoteActionPending(null);
+      return;
+    }
     const rawWeights = optionIndices.map((idx) => Number(weightsInput[idx] ?? ""));
     const weightsBps = normalizeWeightsToBps(rawWeights);
-    if (!weightsBps) return;
-    if (runtime.effectiveAddress) {
-      try {
-        const [space, delegateRegistry] = await Promise.all([
-          runtime.client.readContract({
-            address: contractAddress,
-            abi: [readSpaceAbi],
-            functionName: "getSpace",
-            args: [proposal.spaceId]
-          }),
-          runtime.client.readContract({
-            address: contractAddress,
-            abi: [readDelegateRegistryAbi],
-            functionName: "delegateRegistry"
-          })
-        ]);
-        const { confirmedDelegators } = await computeVotingPowerWithDelegations({
-          client: runtime.client,
-          token: space.token as WalletAddress,
-          voter: runtime.effectiveAddress,
-          delegateRegistry: delegateRegistry as WalletAddress,
-          delegationId: space.delegationId as `0x${string}`
-        });
-        if (confirmedDelegators.length > 0) {
-          await runtime.executeAction({ functionName: "syncDelegationsForSpace", args: [proposal.spaceId, confirmedDelegators] });
-        }
-      } catch {
-        // Ignore sync preflight errors and still allow vote transaction.
-      }
+    if (!weightsBps) {
+      setVoteActionPending(null);
+      return;
     }
-    const result = await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, optionIndices, weightsBps] });
-    if (!result) return;
-    setSelectedOptions({});
-    setWeightsInput({});
+    try {
+      const result = await runtime.executeAction({ functionName: "vote", args: [parsedProposalId, optionIndices, weightsBps] });
+      if (!result) return;
+      setSelectedOptions({});
+      setWeightsInput({});
+    } finally {
+      setVoteActionPending(null);
+    }
   }
 
   async function deleteCurrentProposal() {
-    await runtime.executeAction({ functionName: "deleteProposal", args: [parsedProposalId] });
+    if (voteActionPending !== null || runtime.txPending) return;
+    setVoteActionPending("delete");
+    try {
+      await runtime.executeAction({ functionName: "deleteProposal", args: [parsedProposalId] });
+    } finally {
+      setVoteActionPending(null);
+    }
   }
 
   return (
@@ -1968,9 +2520,9 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
               data-testid="delete-proposal-btn"
               variant="error"
               onClick={deleteCurrentProposal}
-              disabled={runtime.txPending || runtime.isWrongNetwork}
+              disabled={runtime.txPending || runtime.isWrongNetwork || voteActionPending !== null}
             >
-              {runtime.txPending ? "Deleting..." : "Delete Proposal"}
+              {runtime.txPending || voteActionPending === "delete" ? "Deleting..." : "Delete Proposal"}
             </Button>
           </div>
         )}
@@ -2015,7 +2567,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
                             type="checkbox"
                             checked={selected}
                             onChange={(e) => toggleOption(idx, e.target.checked)}
-                            disabled={!canVote || runtime.txPending}
+                            disabled={!canVote || runtime.txPending || voteActionPending !== null}
                           />
                           <Input
                             data-testid={`vote-option-weight-${idx}`}
@@ -2025,7 +2577,7 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
                             placeholder="weight"
                             value={weightsInput[idx] ?? ""}
                             onChange={(e) => setWeightsInput((prev) => ({ ...prev, [idx]: e.target.value }))}
-                            disabled={!selected || !canVote || runtime.txPending}
+                            disabled={!selected || !canVote || runtime.txPending || voteActionPending !== null}
                             style={{ width: 90 }}
                           />
                         </div>
@@ -2034,9 +2586,9 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
                           data-testid={`vote-option-${idx}`}
                           variant="primary"
                           onClick={() => voteSingle(idx)}
-                          disabled={!canVote || runtime.txPending}
+                          disabled={!canVote || runtime.txPending || voteActionPending !== null}
                         >
-                          Vote
+                          {pendingSingleOptionIndex === idx && (runtime.txPending || voteActionPending === "single") ? "Submitting..." : "Vote"}
                         </Button>
                       )}
                     </td>
@@ -2048,8 +2600,13 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
         </TableWrap>
         {proposal.allowMultipleChoices && (
           <div className="row">
-            <Button data-testid="vote-multi-submit" variant="primary" onClick={voteMulti} disabled={!canVote || runtime.txPending}>
-              Submit weighted vote
+            <Button
+              data-testid="vote-multi-submit"
+              variant="primary"
+              onClick={voteMulti}
+              disabled={!canVote || runtime.txPending || voteActionPending !== null}
+            >
+              {runtime.txPending || voteActionPending === "multi" ? "Submitting..." : "Submit weighted vote"}
             </Button>
             <span className="text__caption">Enter any positive numbers. Frontend normalizes them to 100% automatically.</span>
           </div>

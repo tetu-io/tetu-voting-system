@@ -1,5 +1,4 @@
 import { parseAbiItem, type PublicClient } from "viem";
-import type { EventLikeLog } from "./eventText";
 import type { ProposalViewModel, SpaceView, WalletAddress } from "./votingService";
 
 export type ProposalVoterView = {
@@ -64,83 +63,6 @@ async function readUintIdsPage(
     ids.push(...page);
   }
   return ids;
-}
-
-export async function fetchRealActivityLogs(
-  logsClient: PublicClient,
-  address: `0x${string}`
-): Promise<EventLikeLog[]> {
-  const [spaceCreated, spaceAdmins, spaceProposers, proposalCreated, proposalDeletedLogs, voteCast, voteRecast] =
-    await Promise.all([
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem(
-          "event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name)"
-        ),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem("event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed)"),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem(
-          "event SpaceProposerUpdated(uint256 indexed spaceId, address indexed account, bool allowed)"
-        ),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem(
-          "event ProposalCreated(uint256 indexed proposalId, uint256 indexed spaceId, address indexed author, uint64 startAt, uint64 endAt, bool allowMultipleChoices)"
-        ),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem("event ProposalDeleted(uint256 indexed proposalId, address indexed author)"),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem(
-          "event VoteCast(uint256 indexed proposalId, address indexed voter, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 totalWeight)"
-        ),
-        fromBlock: 0n,
-        toBlock: "latest"
-      }),
-      logsClient.getLogs({
-        address,
-        event: parseAbiItem(
-          "event VoteRecast(uint256 indexed proposalId, address indexed voter, uint256 oldTotalWeight, uint16[] optionIndices, uint16[] weightsBps, uint256[] distributedWeights, uint256 newTotalWeight)"
-        ),
-        fromBlock: 0n,
-        toBlock: "latest"
-      })
-    ]);
-
-  const allLogs = [
-    ...spaceCreated,
-    ...spaceAdmins,
-    ...spaceProposers,
-    ...proposalCreated,
-    ...proposalDeletedLogs,
-    ...voteCast,
-    ...voteRecast
-  ] as EventLikeLog[];
-  allLogs.sort((a, b) => {
-    const byBlock = Number((a.blockNumber ?? 0n) - (b.blockNumber ?? 0n));
-    if (byBlock !== 0) return byBlock;
-    return (a.logIndex ?? 0) - (b.logIndex ?? 0);
-  });
-  return allLogs;
 }
 
 export async function fetchRealActiveProposalIds(

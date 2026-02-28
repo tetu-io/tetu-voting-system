@@ -151,11 +151,11 @@ This document is the source of truth for v1 requirements and architecture bounda
   - `proposal:create`
   - `vote:cast`
   - `results:read`
-- Common flags:
-  - `--rpc-url`,
-  - `--private-key`,
-  - `--contract`,
-  - domain-specific ids/options.
+- `delegation:sync`
+- Runtime source:
+  - scripts run from `packages/contracts/scripts`,
+  - RPC/private key are taken from env (`SCRIPT_RPC_URL`/`CLI_RPC_URL`, `SCRIPT_PRIVATE_KEY`/`DEPLOYER_PRIVATE_KEY`),
+  - contract address from `CLI_CONTRACT` or `--contract`.
 - Output:
   - human-readable by default,
   - optional JSON mode for scripting.

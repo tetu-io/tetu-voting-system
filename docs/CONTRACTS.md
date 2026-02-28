@@ -80,7 +80,10 @@ Define on-chain entities, storage strategy, events, errors, and UUPS rules for t
   - `setDelegateRegistry(registry)`
   - `syncDelegationForSpace(spaceId, delegator)`
   - `syncDelegationsForSpace(spaceId, delegators[])`
+  - `setSpaceDelegationSyncPeriod(spaceId, fromTs, toTs)` (space owner only, monotonic checkpoint updates)
   - `setDelegateForSpace(spaceId, delegate)` / `clearDelegateForSpace(spaceId)` (sync wrappers that require registry state to match requested action)
+  - `getSpaceDelegate(spaceId, delegator)`
+  - `getSpaceDelegationSyncPeriod(spaceId)`
 - Read:
   - `getSpace(spaceId)`
   - `getSpaceIdsCount()`
@@ -153,6 +156,7 @@ the same token owner's weight from being counted by multiple voters in one propo
 - `SpaceDelegateSet(spaceId, delegationId, delegator, delegate)`
 - `SpaceDelegateCleared(spaceId, delegationId, delegator, delegate)`
 - `SpaceDelegationSynced(spaceId, delegationId, delegator, delegate)`
+- `SpaceDelegationSyncPeriodUpdated(spaceId, updater, fromTs, toTs)`
 - `Upgraded(implementation)` (from UUPS stack)
 
 ## 9. Custom Errors
@@ -173,6 +177,7 @@ the same token owner's weight from being counted by multiple voters in one propo
 - `DelegationIdNotSet()`
 - `DelegationIdAlreadySet()`
 - `DelegationMismatch()`
+- `InvalidSyncPeriod()`
 - `WeightAlreadyClaimed(address weightOwner, address currentController)`
 
 ## 10. UUPS Upgrade Constraints

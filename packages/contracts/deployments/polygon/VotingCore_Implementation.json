@@ -1,5 +1,5 @@
 {
-  "address": "0x8ed63B90DFF6446Ea3AeADdc45544aB12ed06eDb",
+  "address": "0xE2d2F78028201F1B2da3924b3e0da96C3733e296",
   "abi": [
     {
       "inputs": [
@@ -71,6 +71,11 @@
     {
       "inputs": [],
       "name": "InvalidOption",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidSyncPeriod",
       "type": "error"
     },
     {
@@ -435,6 +440,37 @@
         }
       ],
       "name": "SpaceDelegationIdUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "updater",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "fromTs",
+          "type": "uint64"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint64",
+          "name": "toTs",
+          "type": "uint64"
+        }
+      ],
+      "name": "SpaceDelegationSyncPeriodUpdated",
       "type": "event"
     },
     {
@@ -986,6 +1022,54 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "delegator",
+          "type": "address"
+        }
+      ],
+      "name": "getSpaceDelegate",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        }
+      ],
+      "name": "getSpaceDelegationSyncPeriod",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "fromTs",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "toTs",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "getSpaceIdsCount",
       "outputs": [
@@ -1304,6 +1388,29 @@
           "type": "uint256"
         },
         {
+          "internalType": "uint64",
+          "name": "fromTs",
+          "type": "uint64"
+        },
+        {
+          "internalType": "uint64",
+          "name": "toTs",
+          "type": "uint64"
+        }
+      ],
+      "name": "setSpaceDelegationSyncPeriod",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "spaceId",
+          "type": "uint256"
+        },
+        {
           "internalType": "address",
           "name": "delegator",
           "type": "address"
@@ -1387,5 +1494,5 @@
       "type": "function"
     }
   ],
-  "numDeployments": 4
+  "numDeployments": 6
 }

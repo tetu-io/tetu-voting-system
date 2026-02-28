@@ -56,5 +56,6 @@ export function normalizeError(error: unknown): string {
   if (raw.includes("DelegationIdNotSet")) return "Delegation id is not set for this space";
   if (raw.includes("DelegationIdAlreadySet")) return "Delegation id is already set for this space";
   if (raw.includes("DelegationMismatch")) return "Delegation registry state does not match requested action";
+  if (raw.includes("InvalidSyncPeriod")) return "Invalid delegation sync period";
   return raw;
 }

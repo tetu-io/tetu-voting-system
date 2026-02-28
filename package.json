@@ -5,7 +5,6 @@
   "workspaces": [
     "packages/contracts",
     "packages/web",
-    "packages/cli",
     "packages/shared"
   ],
   "scripts": {

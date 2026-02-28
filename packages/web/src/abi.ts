@@ -15,6 +15,7 @@ export const votingAbi = [
   { type: "error", name: "DelegateRegistryNotSet", inputs: [] },
   { type: "error", name: "DelegationIdNotSet", inputs: [] },
   { type: "error", name: "DelegationIdAlreadySet", inputs: [] },
+  { type: "error", name: "InvalidSyncPeriod", inputs: [] },
   {
     type: "error",
     name: "WeightAlreadyClaimed",
@@ -114,6 +115,17 @@ export const votingAbi = [
     inputs: [
       { name: "spaceId", type: "uint256" },
       { name: "delegators", type: "address[]" }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "setSpaceDelegationSyncPeriod",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "fromTs", type: "uint64" },
+      { name: "toTs", type: "uint64" }
     ],
     outputs: []
   },
@@ -230,6 +242,26 @@ export const votingAbi = [
   },
   {
     type: "function",
+    name: "getSpaceDelegate",
+    stateMutability: "view",
+    inputs: [
+      { name: "spaceId", type: "uint256" },
+      { name: "delegator", type: "address" }
+    ],
+    outputs: [{ name: "", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "getSpaceDelegationSyncPeriod",
+    stateMutability: "view",
+    inputs: [{ name: "spaceId", type: "uint256" }],
+    outputs: [
+      { name: "fromTs", type: "uint64" },
+      { name: "toTs", type: "uint64" }
+    ]
+  },
+  {
+    type: "function",
     name: "getVotingPower",
     stateMutability: "view",
     inputs: [
@@ -267,6 +299,17 @@ export const votingAbi = [
       { indexed: true, name: "owner", type: "address" },
       { indexed: true, name: "token", type: "address" },
       { indexed: false, name: "name", type: "string" }
+    ]
+  },
+  {
+    anonymous: false,
+    type: "event",
+    name: "SpaceDelegationSyncPeriodUpdated",
+    inputs: [
+      { indexed: true, name: "spaceId", type: "uint256" },
+      { indexed: true, name: "updater", type: "address" },
+      { indexed: false, name: "fromTs", type: "uint64" },
+      { indexed: false, name: "toTs", type: "uint64" }
     ]
   },
   {

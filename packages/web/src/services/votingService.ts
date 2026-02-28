@@ -38,6 +38,7 @@ export type VotingAction =
   | { functionName: "setDelegateForSpace"; args: [bigint, WalletAddress] }
   | { functionName: "clearDelegateForSpace"; args: [bigint] }
   | { functionName: "syncDelegationsForSpace"; args: [bigint, WalletAddress[]] }
+  | { functionName: "setSpaceDelegationSyncPeriod"; args: [bigint, bigint, bigint] }
   | { functionName: "createProposal"; args: [bigint, string, string, string[], bigint, bigint, boolean] }
   | { functionName: "deleteProposal"; args: [bigint] }
   | { functionName: "vote"; args: [bigint, number[], number[]] };

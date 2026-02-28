@@ -31,6 +31,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     error DelegationIdNotSet();
     error DelegationIdAlreadySet();
     error DelegationMismatch();
+    error InvalidSyncPeriod();
     error WeightAlreadyClaimed(address weightOwner, address currentController);
 
     struct Space {
@@ -66,6 +67,11 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         address[] contributors;
     }
 
+    struct DelegationSyncPeriod {
+        uint64 fromTs;
+        uint64 toTs;
+    }
+
     uint16 private constant BPS_DENOMINATOR = 10_000;
 
     uint256 private _nextSpaceId;
@@ -86,6 +92,7 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     mapping(uint256 => uint256[]) private _proposalIdsBySpace;
     mapping(uint256 => address[]) private _proposalVoters;
     mapping(uint256 => mapping(address => bool)) private _proposalVoterIndexed;
+    mapping(uint256 => DelegationSyncPeriod) private _spaceDelegationSyncPeriods;
 
     event SpaceCreated(uint256 indexed spaceId, address indexed owner, address indexed token, string name);
     event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed);
@@ -98,6 +105,9 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
     );
     event SpaceDelegationSynced(
         uint256 indexed spaceId, bytes32 indexed delegationId, address indexed delegator, address delegate
+    );
+    event SpaceDelegationSyncPeriodUpdated(
+        uint256 indexed spaceId, address indexed updater, uint64 fromTs, uint64 toTs
     );
     event ProposalCreated(
         uint256 indexed proposalId,
@@ -215,6 +225,22 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         for (uint256 i = 0; i < delegators.length; i++) {
             syncDelegationForSpace(spaceId, delegators[i]);
         }
+    }
+
+    function setSpaceDelegationSyncPeriod(uint256 spaceId, uint64 fromTs, uint64 toTs) external {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        if (msg.sender != s.owner && !_spaceAdmins[spaceId][msg.sender]) revert Unauthorized();
+        if (fromTs > toTs) revert InvalidSyncPeriod();
+
+        DelegationSyncPeriod storage current = _spaceDelegationSyncPeriods[spaceId];
+        if ((current.fromTs != 0 || current.toTs != 0) && (fromTs < current.fromTs || toTs < current.toTs)) {
+            revert InvalidSyncPeriod();
+        }
+
+        current.fromTs = fromTs;
+        current.toTs = toTs;
+        emit SpaceDelegationSyncPeriodUpdated(spaceId, msg.sender, fromTs, toTs);
     }
 
     function createProposal(
@@ -510,6 +536,19 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         return _getVotingPower(spaceId, voter, s.token, s.delegationId);
     }
 
+    function getSpaceDelegate(uint256 spaceId, address delegator) external view returns (address) {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        return _spaceDelegates[spaceId][delegator];
+    }
+
+    function getSpaceDelegationSyncPeriod(uint256 spaceId) external view returns (uint64 fromTs, uint64 toTs) {
+        Space storage s = _spaces[spaceId];
+        if (s.id == 0) revert SpaceNotFound();
+        DelegationSyncPeriod storage period = _spaceDelegationSyncPeriods[spaceId];
+        return (period.fromTs, period.toTs);
+    }
+
     function isAdmin(uint256 spaceId, address account) external view returns (bool) {
         return _spaceAdmins[spaceId][account];
     }
@@ -669,5 +708,5 @@ contract VotingCore is Initializable, OwnableUpgradeable, UUPSUpgradeable, Reent
         return page;
     }
 
-    uint256[41] private __gap;
+    uint256[40] private __gap;
 }

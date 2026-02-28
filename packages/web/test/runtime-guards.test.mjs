@@ -145,8 +145,8 @@ assert(
   "fetchRealSpaces must not depend on event log scans."
 );
 assert(
-  /export\s+async\s+function\s+fetchRealActivityLogs[\s\S]*?getLogs\(/m.test(realViewsSource),
-  "fetchRealActivityLogs must remain available as fallback diagnostic path."
+  !/export\s+async\s+function\s+fetchRealActivityLogs/m.test(realViewsSource),
+  "fetchRealActivityLogs should be removed to avoid full historical event-log scans."
 );
 assert(
   delegateIdTextToBytes32("tetubal.eth") === "0x7465747562616c2e657468000000000000000000000000000000000000000000",

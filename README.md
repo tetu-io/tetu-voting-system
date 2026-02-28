@@ -3,7 +3,7 @@
 Simplified Snapshot-like voting system (v1) with:
 - UUPS-upgradeable Solidity contracts,
 - React web app with wagmi-based wallet integration,
-- Node CLI for proposal/vote/results flows,
+- Node scripts in contracts package for proposal/vote/results/sync flows,
 - delegation-aware voting power via Snapshot DelegateRegistry-compatible flow,
 - proposal-level delegated weight ownership guard (prevents mid-proposal double counting),
 - local-first Hardhat setup.
@@ -12,7 +12,6 @@ Simplified Snapshot-like voting system (v1) with:
 
 - `packages/contracts` - Hardhat contracts, deploy/seed/upgrade scripts, contract tests
 - `packages/web` - React + Vite UI (wagmi + Rainbow Wallet + WalletConnect/test wallet mode)
-- `packages/cli` - CLI commands (`proposal:create`, `vote:cast`, `results:read`)
 - `packages/shared` - shared types and generated local deployment artifacts
 
 ## Environment
@@ -28,7 +27,8 @@ Key variables:
 - `VITE_USE_MOCK` (optional, when `true` UI uses internal in-memory mock wallet + mock contracts)
 - `VITE_TEST_PRIVATE_KEY` (optional, used by e2e test wallet flow)
 - `VITE_ENABLE_TEST_WALLET_LOGIN` (optional, default `false`; when `true` shows private-key login controls in UI for local/e2e flows)
-- `CLI_RPC_URL`
+- `SCRIPT_RPC_URL` (or `CLI_RPC_URL`)
+- `SCRIPT_PRIVATE_KEY` (or `DEPLOYER_PRIVATE_KEY`)
 - `CLI_CONTRACT`
 
 ## Frontend pages
@@ -38,7 +38,8 @@ The UI is route-based and includes:
 - `/spaces/:spaceId` - proposals table with pagination and quick actions.
 - `/spaces/:spaceId/proposals/new` - dedicated proposal creation page (supports single-choice or multi-choice proposals).
 - `/spaces/:spaceId/settings` - space settings (admin role assignment).
-- `/spaces/:spaceId/settings` - space settings (admin role assignment, delegation id setup, delegate/undelegate actions).
+- `/spaces/:spaceId/settings` - space settings (admin role assignment, delegation id setup).
+- `/spaces/:spaceId` -> `Delegate` modal - delegate/undelegate for any user, plus owner-only delegation sync.
 - `/proposals/:proposalId` - tallies, voters table, and vote action (single click for single-choice, arbitrary weight inputs for multi-choice that frontend auto-normalizes to percentages).
 
 Wallet network guard (web3 safety):
@@ -139,14 +140,27 @@ npm run test:e2e -w packages/web
 npm run test:e2e:full
 ```
 
-CLI:
+Contract scripts (CLI-style):
 
 ```bash
-npm run test -w packages/cli
-node packages/cli/src/index.js proposal:create --help
-node packages/cli/src/index.js vote:cast --help
-node packages/cli/src/index.js results:read --help
+npm run voting:cli -w packages/contracts -- --help
+npm run voting:cli -w packages/contracts -- proposal:create --help
+npm run voting:cli -w packages/contracts -- vote:cast --help
+npm run voting:cli -w packages/contracts -- results:read --help
+npm run voting:cli -w packages/contracts -- delegation:sync --help
 ```
+
+`delegation:sync` details:
+- `--days` is required and defines the sync window length;
+- range start is calculated from the latest on-chain checkpoint (`checkpoint.toTs + 1 second`);
+- if no checkpoint exists, range starts at `2021-11-01`;
+- range end is `start + days`, capped by current time;
+- sync is processed month-by-month and (for space owner) checkpoint dates are saved to contract for each successfully completed month.
+
+Web delegation sync behavior:
+- sync controls are visible only to the space owner;
+- sync range is auto-filled from on-chain checkpoint (`getSpaceDelegationSyncPeriod().toTs`) to current time;
+- if no checkpoint exists yet, UI falls back to the last 7 days for initial sync window.
 
 ## Quality gates
 

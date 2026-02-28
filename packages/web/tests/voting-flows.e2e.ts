@@ -13,6 +13,7 @@ const deploymentPath = path.resolve(__dirname, "../../shared/src/deployment.loca
 const ownerKey = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const adminAddress = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const delegatedWalletKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+const outsiderWalletKey = "0x5de4111afa1a4b94908f83103eb9b53df6f91bc82017d443c0f429f9d6b35d95";
 const ownerAddress = privateKeyToAccount(ownerKey).address;
 const delegatedWalletAddress = privateKeyToAccount(delegatedWalletKey).address;
 const delegationId = "0x1111111111111111111111111111111111111111111111111111111111111111";
@@ -21,6 +22,12 @@ function toDateTimeLocalInput(unixTs: number): string {
   const date = new Date(unixTs * 1000);
   date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
   return date.toISOString().slice(0, 16);
+}
+
+function toDateInput(unixTs: number): string {
+  const date = new Date(unixTs * 1000);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
 }
 
 function attachRuntimeGuards(page: import("@playwright/test").Page) {
@@ -98,6 +105,19 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   await page.getByTestId("space-delegation-id-input").fill(delegationId);
   await page.getByTestId("set-space-delegation-id-btn").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setSpaceDelegationId");
+  await page.getByTestId("wallet-status").click();
+  await page.getByTestId("disconnect-wallet").click();
+  await page.getByTestId("test-wallet-key-input").fill(outsiderWalletKey);
+  await page.getByTestId("connect-test-wallet").click();
+  await page.goto(`/spaces/${createdSpaceIdText}`);
+  await expect(page.getByTestId("open-space-settings-btn")).toHaveCount(0);
+  await page.goto(`/spaces/${createdSpaceIdText}/settings`);
+  await expect(page.getByText("You do not have permission to change this space settings.")).toBeVisible();
+  await page.getByTestId("wallet-status").click();
+  await page.getByTestId("disconnect-wallet").click();
+  await page.getByTestId("test-wallet-key-input").fill(ownerKey);
+  await page.getByTestId("connect-test-wallet").click();
+  await expect(page.getByTestId("wallet-status")).toHaveText(/^0x[a-fA-F0-9]{4}\.\.\.[a-fA-F0-9]{4}$/);
 
   // Keep e2e deterministic: ensure id is set even if UI toast races.
   const ownerWallet = createWalletClient({
@@ -163,13 +183,15 @@ test("frontend pages flow on real contracts", async ({ page }) => {
     });
     await rpc.waitForTransactionReceipt({ hash: setDelegateTx });
   }
-  const syncSetTx = await ownerWallet.writeContract({
-    address: deployment.votingCore,
-    abi: votingAbi,
-    functionName: "syncDelegationForSpace",
-    args: [createdSpaceId, delegatedWalletAddress]
-  });
-  await rpc.waitForTransactionReceipt({ hash: syncSetTx });
+  const syncNowTs = Math.floor(Date.now() / 1000);
+  await page.goto(`/spaces/${createdSpaceIdText}`);
+  await page.getByTestId("open-delegate-modal-btn").click();
+  await expect(page.getByTestId("delegate-sync-from-date")).toHaveValue(/^\d{4}-\d{2}-\d{2}$/);
+  await expect(page.getByTestId("delegate-sync-to-date")).toHaveValue(toDateInput(syncNowTs));
+  await page.getByTestId("delegate-sync-btn").click();
+  await expect(page.getByTestId("delegate-sync-summary")).toContainText("outdated");
+  await expect(page.getByTestId("delegate-owner-sync-period")).not.toContainText(" - to -");
+  await page.getByRole("button", { name: "Close" }).click();
 
   await page.goto(`/spaces/${createdSpaceIdText}`);
   if (!(await page.getByTestId("wallet-status").isVisible().catch(() => false))) {

@@ -365,4 +365,44 @@ describe("VotingCore", function () {
       .to.be.revertedWithCustomError(voting, "WeightAlreadyClaimed")
       .withArgs(other.address, other.address);
   });
+
+  it("stores monotonic delegation sync period for owner and admin", async function () {
+    const { voting, owner, admin, spaceId } = await loadFixture(deployFixture);
+    const fromOne = 1_700_000_000n;
+    const toOne = 1_700_086_400n;
+    const fromTwo = 1_700_086_400n;
+    const toTwo = 1_700_172_800n;
+
+    await (await voting.connect(owner).setAdmin(spaceId, admin.address, true)).wait();
+
+    await expect(voting.connect(admin).setSpaceDelegationSyncPeriod(spaceId, fromOne, toOne))
+      .to.emit(voting, "SpaceDelegationSyncPeriodUpdated")
+      .withArgs(spaceId, admin.address, fromOne, toOne);
+    expect(await voting.getSpaceDelegationSyncPeriod(spaceId)).to.deep.equal([fromOne, toOne]);
+
+    await expect(voting.connect(owner).setSpaceDelegationSyncPeriod(spaceId, fromTwo, toTwo))
+      .to.emit(voting, "SpaceDelegationSyncPeriodUpdated")
+      .withArgs(spaceId, owner.address, fromTwo, toTwo);
+    expect(await voting.getSpaceDelegationSyncPeriod(spaceId)).to.deep.equal([fromTwo, toTwo]);
+  });
+
+  it("rejects non-monotonic delegation sync period updates", async function () {
+    const { voting, owner, spaceId } = await loadFixture(deployFixture);
+    const fromOne = 1_700_000_000n;
+    const toOne = 1_700_086_400n;
+
+    await (await voting.connect(owner).setSpaceDelegationSyncPeriod(spaceId, fromOne, toOne)).wait();
+    await expect(voting.connect(owner).setSpaceDelegationSyncPeriod(spaceId, fromOne - 1n, toOne)).to.be.revertedWithCustomError(
+      voting,
+      "InvalidSyncPeriod"
+    );
+    await expect(voting.connect(owner).setSpaceDelegationSyncPeriod(spaceId, fromOne, toOne - 1n)).to.be.revertedWithCustomError(
+      voting,
+      "InvalidSyncPeriod"
+    );
+    await expect(voting.connect(owner).setSpaceDelegationSyncPeriod(spaceId, toOne, fromOne)).to.be.revertedWithCustomError(
+      voting,
+      "InvalidSyncPeriod"
+    );
+  });
 });

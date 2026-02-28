@@ -18,6 +18,11 @@ type VoteReceipt = {
   updatedAt: bigint;
 };
 
+type DelegationSyncPeriod = {
+  fromTs: bigint;
+  toTs: bigint;
+};
+
 const MOCK_ACCOUNTS: WalletAddress[] = [
   "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -35,6 +40,7 @@ class InMemoryVotingService implements VotingService {
   private readonly receipts = new Map<bigint, Map<WalletAddress, VoteReceipt>>();
   private readonly balances = new Map<WalletAddress, bigint>();
   private readonly delegatesBySpace = new Map<bigint, Map<WalletAddress, WalletAddress>>();
+  private readonly delegationSyncPeriods = new Map<bigint, DelegationSyncPeriod>();
   private readonly listeners = new Set<() => void>();
   private readonly activity: string[] = [];
 
@@ -96,6 +102,12 @@ class InMemoryVotingService implements VotingService {
     return this.admins.get(spaceId)?.has(account) ?? false;
   }
 
+  listAdmins(spaceId: bigint): WalletAddress[] {
+    const admins = this.admins.get(spaceId);
+    if (!admins) return [];
+    return [...admins].sort((a, b) => a.localeCompare(b));
+  }
+
   isProposer(spaceId: bigint, account: WalletAddress): boolean {
     const space = this.spaces.get(spaceId);
     if (!space) return false;
@@ -148,6 +160,10 @@ class InMemoryVotingService implements VotingService {
       }
     }
     return total;
+  }
+
+  getSpaceDelegationSyncPeriod(spaceId: bigint): DelegationSyncPeriod {
+    return this.delegationSyncPeriods.get(spaceId) ?? { fromTs: 0n, toTs: 0n };
   }
 
   async execute(action: VotingAction): Promise<VotingTxResult> {
@@ -243,6 +259,21 @@ class InMemoryVotingService implements VotingService {
       if (space.delegationId === "0x0000000000000000000000000000000000000000000000000000000000000000") {
         throw new Error("DelegationIdNotSet");
       }
+    } else if (action.functionName === "setSpaceDelegationSyncPeriod") {
+      const [spaceId, fromTs, toTs] = action.args;
+      const space = this.spaces.get(spaceId);
+      if (!space) throw new Error("SpaceNotFound");
+      if (space.owner !== from) throw new Error("Unauthorized");
+      if (fromTs > toTs) throw new Error("InvalidSyncPeriod");
+      const current = this.delegationSyncPeriods.get(spaceId);
+      if (current && (fromTs < current.fromTs || toTs < current.toTs)) {
+        throw new Error("InvalidSyncPeriod");
+      }
+      this.delegationSyncPeriods.set(spaceId, { fromTs, toTs });
+      logs.push({
+        eventName: "SpaceDelegationSyncPeriodUpdated",
+        args: { spaceId, updater: from, fromTs, toTs }
+      });
     } else if (action.functionName === "createProposal") {
       const [spaceId, title, description, options, startAt, endAt, allowMultipleChoices] = action.args;
       const space = this.spaces.get(spaceId);
@@ -409,6 +440,7 @@ export type MockVotingViews = {
   listProposalsBySpace(spaceId: bigint): ProposalViewModel[];
   listVotersForProposal(proposalId: bigint): ProposalVoterView[];
   getVotingPower(spaceId: bigint, voter: WalletAddress): bigint;
+  getSpaceDelegationSyncPeriod(spaceId: bigint): { fromTs: bigint; toTs: bigint };
 };
 
 export function getMockVotingService(chainId: number): VotingService {

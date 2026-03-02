@@ -32,6 +32,11 @@ test("frontend pages flow in mock mode", async ({ page }) => {
 
   await page.goto(`/spaces/${createdSpaceId}`);
   await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceId}$`));
+  await page.getByRole("tab", { name: "About space" }).click();
+  await expect(page.getByTestId("space-owner-value")).toContainText(/^Owner:\s0x[a-fA-F0-9]{40}$/);
+  await expect(page.getByTestId("space-token-value")).toContainText(/^Token:\s0x[a-fA-F0-9]{40}$/);
+  await expect(page.getByTestId("space-delegation-id-value")).toContainText(/^Delegation ID:\s0x[a-fA-F0-9]{64}$/);
+  await page.getByRole("tab", { name: "Proposals" }).click();
   await page.getByRole("button", { name: "Create Proposal" }).click();
   await expect(page).toHaveURL(new RegExp(`/spaces/${createdSpaceId}/proposals/new$`));
   const createBreadcrumbs = page.getByRole("navigation", { name: "Breadcrumbs" });
@@ -50,6 +55,8 @@ test("frontend pages flow in mock mode", async ({ page }) => {
   await page.getByTestId("proposal-end-input").fill(toDateTimeLocalInput(nowTs + 3600));
   await page.getByTestId("create-proposal-btn").click();
   await expect(page).toHaveURL(/\/proposals\/\d+$/);
+  await expect(page.getByTestId("proposal-start-date")).toContainText("Start date:");
+  await expect(page.getByTestId("proposal-end-date")).toContainText("End date:");
 
   await page.getByTestId("vote-option-check-0").check();
   await page.getByTestId("vote-option-weight-0").fill("1");

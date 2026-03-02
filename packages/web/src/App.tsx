@@ -1624,7 +1624,24 @@ function SpacePage({ runtime }: { runtime: RuntimeContext }) {
             { id: "about", label: "About space" }
           ]}
         />
-        {activeTab === "about" && <p className="text__paragraph">{space?.description ?? "Space not found or not loaded"}</p>}
+        {activeTab === "about" && (
+          <div className="stack-2">
+            <p className="text__paragraph">{space?.description ?? "Space not found or not loaded"}</p>
+            {space && (
+              <>
+                <p className="text__paragraph" data-testid="space-owner-value" style={{ margin: 0 }}>
+                  Owner: {space.owner}
+                </p>
+                <p className="text__paragraph" data-testid="space-token-value" style={{ margin: 0 }}>
+                  Token: {space.token}
+                </p>
+                <p className="text__paragraph" data-testid="space-delegation-id-value" style={{ margin: 0, wordBreak: "break-all" }}>
+                  Delegation ID: {space.delegationId}
+                </p>
+              </>
+            )}
+          </div>
+        )}
         {activeTab === "proposals" && (
           <>
             <TableWrap>
@@ -2512,6 +2529,12 @@ function ProposalPage({ runtime }: { runtime: RuntimeContext }) {
           <strong className={proposalStatus === "active" ? "success" : proposalStatus === "deleted" ? "error" : "muted"}>
             {proposalStatus}
           </strong>
+        </p>
+        <p className="text__paragraph" data-testid="proposal-start-date" style={{ marginBottom: 0 }}>
+          Start date: {unixToLocalDisplay(proposal.startAt)}
+        </p>
+        <p className="text__paragraph" data-testid="proposal-end-date">
+          End date: {unixToLocalDisplay(proposal.endAt)}
         </p>
         <p className="text__paragraph">Your voting power: {formatEther(votingPower)} tokens</p>
         {canDeleteProposal && (

@@ -16,6 +16,7 @@ const delegatedWalletKey = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412
 const outsiderWalletKey = "0x5de4111afa1a4b94908f83103eb9b53df6f91bc82017d443c0f429f9d6b35d95";
 const ownerAddress = privateKeyToAccount(ownerKey).address;
 const delegatedWalletAddress = privateKeyToAccount(delegatedWalletKey).address;
+const outsiderAddress = privateKeyToAccount(outsiderWalletKey).address;
 const delegationId = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
 function toDateTimeLocalInput(unixTs: number): string {
@@ -101,6 +102,12 @@ test("frontend pages flow on real contracts", async ({ page }) => {
   await page.getByTestId("admin-account-input").fill(adminAddress);
   await page.getByTestId("set-admin-btn").click();
   await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setAdmin");
+  await page.getByRole("tab", { name: "Proposers" }).click();
+  await page.getByTestId("proposer-account-input").fill(outsiderAddress);
+  await page.getByTestId("set-proposer-btn").click();
+  await expect(page.getByTestId("status-message")).toContainText("Tx confirmed: setProposer");
+  await expect(page.getByText("not enumerable on this network without event logs")).toBeVisible();
+  await page.getByRole("tab", { name: "Space delegation" }).click();
   await page.goto(`/spaces/${createdSpaceIdText}/settings`);
   await page.getByTestId("space-delegation-id-input").fill(delegationId);
   await page.getByTestId("set-space-delegation-id-btn").click();
@@ -140,6 +147,13 @@ test("frontend pages flow on real contracts", async ({ page }) => {
     args: [createdSpaceId, adminAddress]
   });
   expect(adminOnChain).toBe(true);
+  const proposerOnChain = await rpc.readContract({
+    address: deployment.votingCore,
+    abi: votingAbi,
+    functionName: "isProposer",
+    args: [createdSpaceId, outsiderAddress]
+  });
+  expect(proposerOnChain).toBe(true);
 
   const delegatedWallet = createWalletClient({
     account: privateKeyToAccount(delegatedWalletKey),

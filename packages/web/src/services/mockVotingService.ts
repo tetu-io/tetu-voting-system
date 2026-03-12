@@ -108,6 +108,16 @@ class InMemoryVotingService implements VotingService {
     return [...admins].sort((a, b) => a.localeCompare(b));
   }
 
+  listProposers(spaceId: bigint): WalletAddress[] {
+    const space = this.spaces.get(spaceId);
+    const proposers = this.proposers.get(spaceId) ?? new Set<WalletAddress>();
+    if (!space) return [...proposers].sort((a, b) => a.localeCompare(b));
+
+    const result = new Set<WalletAddress>(proposers);
+    result.add(space.owner);
+    return [...result].sort((a, b) => a.localeCompare(b));
+  }
+
   isProposer(spaceId: bigint, account: WalletAddress): boolean {
     const space = this.spaces.get(spaceId);
     if (!space) return false;

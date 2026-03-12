@@ -37,8 +37,7 @@ The UI is route-based and includes:
 - `/` - spaces table + create-space modal.
 - `/spaces/:spaceId` - proposals table with pagination and quick actions.
 - `/spaces/:spaceId/proposals/new` - dedicated proposal creation page (supports single-choice or multi-choice proposals).
-- `/spaces/:spaceId/settings` - space settings (admin role assignment).
-- `/spaces/:spaceId/settings` - space settings (admin role assignment, delegation id setup).
+- `/spaces/:spaceId/settings` - space settings (grant/revoke `admin` and `proposer` by address, delegation id setup).
 - `/spaces/:spaceId` -> `Delegate` modal - delegate/undelegate for any user, plus owner-only delegation sync.
 - `/proposals/:proposalId` - tallies, voters table, and vote action (single click for single-choice, arbitrary weight inputs for multi-choice that frontend auto-normalizes to percentages).
 

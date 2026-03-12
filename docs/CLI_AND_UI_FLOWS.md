@@ -41,8 +41,11 @@ UI has two modes:
 
 ## 1.5 Space Settings
 1. User opens `/spaces/:spaceId/settings`.
-2. User fills admin address and allowed flag.
-3. UI sends `setAdmin`.
+2. User manages roles by address:
+   - owner can grant/revoke `admin`,
+   - owner or admin can grant/revoke `proposer`,
+   - for networks without usable event logs, UI does not try to enumerate current role members.
+3. UI sends `setAdmin` or `setProposer`.
 
 ## 1.6 Proposal Page
 1. User opens `/proposals/:proposalId`.

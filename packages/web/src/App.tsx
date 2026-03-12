@@ -90,7 +90,6 @@ const delegateRegistryEthersAbi = [
   "event ClearDelegate(address indexed delegator, bytes32 indexed id)",
   "event ClearDelegate(address indexed delegator, bytes32 indexed id, address indexed delegate)"
 ] as const;
-const spaceAdminUpdatedEvent = parseAbiItem("event SpaceAdminUpdated(uint256 indexed spaceId, address indexed account, bool allowed)");
 let cachedDelegateLogsProvider: JsonRpcProvider | null = null;
 
 type RuntimeContext = {
@@ -1965,21 +1964,27 @@ function ProposalCreatePage({ runtime }: { runtime: RuntimeContext }) {
 function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
   const { spaceId } = useParams();
   const parsedSpaceId = spaceId && /^\d+$/.test(spaceId) ? BigInt(spaceId) : null;
-  const [settingsTab, setSettingsTab] = useState<"admins" | "delegation">("admins");
+  const [settingsTab, setSettingsTab] = useState<"admins" | "proposers" | "delegation">("admins");
   const [adminAccount, setAdminAccount] = useState("");
+  const [adminAllowed, setAdminAllowed] = useState<"grant" | "revoke">("grant");
   const [spaceAdmins, setSpaceAdmins] = useState<WalletAddress[]>([]);
-  const [adminsLoading, setAdminsLoading] = useState(false);
-  const [adminsError, setAdminsError] = useState<string | null>(null);
+  const [proposerAccount, setProposerAccount] = useState("");
+  const [proposerAllowed, setProposerAllowed] = useState<"grant" | "revoke">("grant");
+  const [spaceProposers, setSpaceProposers] = useState<WalletAddress[]>([]);
+  const [roleMembersLoading, setRoleMembersLoading] = useState(false);
+  const [roleMembersError, setRoleMembersError] = useState<string | null>(null);
   const [delegationIdInput, setDelegationIdInput] = useState("");
   const [permissionsResolved, setPermissionsResolved] = useState(false);
   const [canManageSpaceSettings, setCanManageSpaceSettings] = useState(false);
   const [canManageAdmins, setCanManageAdmins] = useState(false);
+  const [canManageProposers, setCanManageProposers] = useState(false);
 
   useEffect(() => {
     if (parsedSpaceId === null) {
       setPermissionsResolved(true);
       setCanManageSpaceSettings(false);
       setCanManageAdmins(false);
+      setCanManageProposers(false);
       return;
     }
     let cancelled = false;
@@ -1996,10 +2001,12 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
             setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
             setCanManageSpaceSettings(isOwner || isAdmin);
             setCanManageAdmins(isOwner);
+            setCanManageProposers(isOwner || isAdmin);
           }
         } else if (!cancelled) {
           setCanManageSpaceSettings(false);
           setCanManageAdmins(false);
+          setCanManageProposers(false);
         }
         if (!cancelled) setPermissionsResolved(true);
         return;
@@ -2028,11 +2035,13 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
           setDelegationIdInput(bytes32ToReadableText(space.delegationId) ?? space.delegationId);
           setCanManageSpaceSettings(isOwner || Boolean(isAdmin));
           setCanManageAdmins(isOwner);
+          setCanManageProposers(isOwner || Boolean(isAdmin));
         }
       } catch {
         if (!cancelled) {
           setCanManageSpaceSettings(false);
           setCanManageAdmins(false);
+          setCanManageProposers(false);
         }
       } finally {
         if (!cancelled) setPermissionsResolved(true);
@@ -2047,62 +2056,47 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
   useEffect(() => {
     if (parsedSpaceId === null) {
       setSpaceAdmins([]);
-      setAdminsError(null);
-      setAdminsLoading(false);
+      setSpaceProposers([]);
+      setRoleMembersError(null);
+      setRoleMembersLoading(false);
       return;
     }
     let cancelled = false;
     async function run() {
-      setAdminsLoading(true);
-      setAdminsError(null);
+      setRoleMembersLoading(true);
+      setRoleMembersError(null);
       try {
         if (useMock) {
           if (cancelled) return;
           setSpaceAdmins(runtime.mockService.listAdmins(parsedSpaceId));
+          setSpaceProposers(runtime.mockService.listProposers(parsedSpaceId));
           return;
         }
-        const logs = await runtime.eventLogsClient.getLogs({
-          address: contractAddress,
-          event: spaceAdminUpdatedEvent,
-          args: { spaceId: parsedSpaceId },
-          fromBlock: 0n,
-          toBlock: "latest"
-        });
-        if (cancelled) return;
-
-        const latestByAdmin = new Map<string, { account: WalletAddress; allowed: boolean }>();
-        for (const log of logs) {
-          const account = String(log.args.account ?? "").toLowerCase();
-          if (!isWalletAddress(account)) continue;
-          latestByAdmin.set(account, {
-            account,
-            allowed: Boolean(log.args.allowed)
-          });
-        }
-        const admins = [...latestByAdmin.values()]
-          .filter((item) => item.allowed)
-          .map((item) => item.account)
-          .sort((a, b) => a.localeCompare(b));
-        setSpaceAdmins(admins);
+        setSpaceAdmins([]);
+        setSpaceProposers([]);
       } catch (error) {
         if (!cancelled) {
-          setAdminsError(normalizeError(error));
+          setRoleMembersError(normalizeError(error));
           setSpaceAdmins([]);
+          setSpaceProposers([]);
         }
       } finally {
-        if (!cancelled) setAdminsLoading(false);
+        if (!cancelled) setRoleMembersLoading(false);
       }
     }
     void run();
     return () => {
       cancelled = true;
     };
-  }, [parsedSpaceId, runtime.eventLogsClient, runtime.mockService, runtime.refreshNonce]);
+  }, [parsedSpaceId, runtime.mockService, runtime.refreshNonce]);
 
-  async function submit() {
+  async function submitAdminRoleUpdate() {
     if (parsedSpaceId === null) return;
     if (!isWalletAddress(adminAccount)) return;
-    const result = await runtime.executeAction({ functionName: "setAdmin", args: [parsedSpaceId, adminAccount, true] });
+    const result = await runtime.executeAction({
+      functionName: "setAdmin",
+      args: [parsedSpaceId, adminAccount, adminAllowed === "grant"]
+    });
     if (!result) return;
     setAdminAccount("");
   }
@@ -2110,6 +2104,22 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
   async function removeAdmin(account: WalletAddress) {
     if (parsedSpaceId === null) return;
     await runtime.executeAction({ functionName: "setAdmin", args: [parsedSpaceId, account, false] });
+  }
+
+  async function submitProposerRoleUpdate() {
+    if (parsedSpaceId === null) return;
+    if (!isWalletAddress(proposerAccount)) return;
+    const result = await runtime.executeAction({
+      functionName: "setProposer",
+      args: [parsedSpaceId, proposerAccount, proposerAllowed === "grant"]
+    });
+    if (!result) return;
+    setProposerAccount("");
+  }
+
+  async function removeProposer(account: WalletAddress) {
+    if (parsedSpaceId === null) return;
+    await runtime.executeAction({ functionName: "setProposer", args: [parsedSpaceId, account, false] });
   }
 
   async function saveDelegationId() {
@@ -2149,9 +2159,10 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
             <div className="stack-4">
               <Tabs
                 activeId={settingsTab}
-                onChange={(tab) => setSettingsTab(tab as "admins" | "delegation")}
+                onChange={(tab) => setSettingsTab(tab as "admins" | "proposers" | "delegation")}
                 items={[
                   { id: "admins", label: "Admins" },
+                  { id: "proposers", label: "Proposers" },
                   { id: "delegation", label: "Space delegation" }
                 ]}
               />
@@ -2162,12 +2173,16 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
                     <h3 className="text__title4" style={{ margin: 0 }}>
                       Current admins
                     </h3>
-                    {adminsLoading ? (
+                    {roleMembersLoading ? (
                       <p className="text__paragraph" style={{ margin: 0 }}>
                         Loading admins...
                       </p>
-                    ) : adminsError ? (
-                      <StatusMessage tone="error">{adminsError}</StatusMessage>
+                    ) : roleMembersError ? (
+                      <StatusMessage tone="error">{roleMembersError}</StatusMessage>
+                    ) : !useMock ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        Current admin members are not enumerable on this network without event logs. Use the address control below to grant or revoke access directly.
+                      </p>
                     ) : spaceAdmins.length === 0 ? (
                       <p className="text__paragraph" style={{ margin: 0 }}>
                         No admins assigned yet.
@@ -2207,18 +2222,112 @@ function SpaceSettingsPage({ runtime }: { runtime: RuntimeContext }) {
                           placeholder="0x..."
                         />
                       </Field>
+                      <Field>
+                        <FieldLabel>Admin action</FieldLabel>
+                        <Select
+                          data-testid="admin-role-action-select"
+                          value={adminAllowed}
+                          onChange={(e) => setAdminAllowed(e.target.value as "grant" | "revoke")}
+                        >
+                          <option value="grant">Grant admin</option>
+                          <option value="revoke">Revoke admin</option>
+                        </Select>
+                      </Field>
                       <Button
                         data-testid="set-admin-btn"
                         variant="primary"
-                        onClick={submit}
+                        onClick={submitAdminRoleUpdate}
                         disabled={!isWalletAddress(adminAccount) || runtime.txPending || runtime.isWrongNetwork}
                       >
-                        {runtime.txPending ? "Adding..." : "Add Admin"}
+                        {runtime.txPending ? "Saving..." : adminAllowed === "grant" ? "Grant Admin" : "Revoke Admin"}
                       </Button>
                     </>
                   ) : (
                     <p className="text__paragraph" style={{ margin: 0 }}>
                       Only the space owner can add or remove admins.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {settingsTab === "proposers" && (
+                <div className="stack-3">
+                  <Card surface="dark" className="stack-3">
+                    <h3 className="text__title4" style={{ margin: 0 }}>
+                      Current proposers
+                    </h3>
+                    {roleMembersLoading ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        Loading proposers...
+                      </p>
+                    ) : roleMembersError ? (
+                      <StatusMessage tone="error">{roleMembersError}</StatusMessage>
+                    ) : !useMock ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        Current proposer members are not enumerable on this network without event logs. Use the address control below to grant or revoke access directly.
+                      </p>
+                    ) : spaceProposers.length === 0 ? (
+                      <p className="text__paragraph" style={{ margin: 0 }}>
+                        No proposers assigned yet.
+                      </p>
+                    ) : (
+                      <div className="stack-2">
+                        {spaceProposers.map((account) => (
+                          <div key={account} className="row-between">
+                            <span className="text__paragraph" style={{ margin: 0 }}>
+                              {account}
+                            </span>
+                            {canManageProposers && (
+                              <Button
+                                variant="error"
+                                onClick={() => void removeProposer(account)}
+                                disabled={runtime.txPending || runtime.isWrongNetwork}
+                                aria-label={`Remove proposer ${account}`}
+                                title="Remove proposer"
+                              >
+                                ×
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+
+                  {canManageProposers ? (
+                    <>
+                      <Field>
+                        <FieldLabel>Proposer address</FieldLabel>
+                        <Input
+                          data-testid="proposer-account-input"
+                          value={proposerAccount}
+                          onChange={(e) => setProposerAccount(e.target.value)}
+                          placeholder="0x..."
+                        />
+                      </Field>
+                      <Field>
+                        <FieldLabel>Proposer action</FieldLabel>
+                        <Select
+                          data-testid="proposer-role-action-select"
+                          value={proposerAllowed}
+                          onChange={(e) => setProposerAllowed(e.target.value as "grant" | "revoke")}
+                        >
+                          <option value="grant">Grant proposer</option>
+                          <option value="revoke">Revoke proposer</option>
+                        </Select>
+                      </Field>
+                      <Button
+                        data-testid="set-proposer-btn"
+                        variant="primary"
+                        onClick={submitProposerRoleUpdate}
+                        disabled={!isWalletAddress(proposerAccount) || runtime.txPending || runtime.isWrongNetwork}
+                      >
+                        {runtime.txPending ? "Saving..." : proposerAllowed === "grant" ? "Grant Proposer" : "Revoke Proposer"}
+                      </Button>
+                    </>
+                  ) : (
+                    <p className="text__paragraph" style={{ margin: 0 }}>
+                      Only the space owner or an admin can add or remove proposers.
                     </p>
                   )}
                 </div>
